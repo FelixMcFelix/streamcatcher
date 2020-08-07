@@ -1,12 +1,6 @@
 use std::{
-	io::{
-		Read,
-		Result as IoResult,
-	},
-	sync::atomic::{
-		AtomicU64,
-		Ordering,
-	},
+	io::{Read, Result as IoResult},
+	sync::atomic::{AtomicU64, Ordering},
 };
 use streamcatcher::*;
 

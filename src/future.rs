@@ -1,6 +1,6 @@
 //! Top-of-line description.
-use async_trait::async_trait;
 use crate::*;
+use async_trait::async_trait;
 use core::{
 	future::Future,
 	pin::Pin,
@@ -8,50 +8,33 @@ use core::{
 	task::{Context, Poll},
 };
 use futures::{
-	io::{
-		self,
-		AsyncRead,
-		AsyncReadExt,
-		AsyncSeek,
-	},
+	io::{self, AsyncRead, AsyncReadExt, AsyncSeek},
 	lock::{Mutex, MutexGuard},
 };
 use std::{
 	cell::UnsafeCell,
 	collections::LinkedList,
 	error::Error,
-	io::{
-		Error as IoError,
-		ErrorKind as IoErrorKind,
-		Read,
-		Result as IoResult,
-		Seek,
-		SeekFrom,
-	},
+	io::{Error as IoError, ErrorKind as IoErrorKind, Read, Result as IoResult, Seek, SeekFrom},
 	marker::Unpin,
-	mem::{
-		self,
-		ManuallyDrop,
-	},
+	mem::{self, ManuallyDrop},
 	sync::{
-		atomic::{
-			AtomicU8,
-			AtomicUsize, 
-			Ordering,
-		},
+		atomic::{AtomicU8, AtomicUsize, Ordering},
 		Arc,
 	},
 };
 #[cfg(feature = "tokio-compat")]
-use tokio::io::{
-	AsyncRead as TokioRead,
-	AsyncSeek as TokioSeek,
-};
+use tokio::io::{AsyncRead as TokioRead, AsyncSeek as TokioSeek};
 
 pub type Catcher<T> = TxCatcher<T, Identity>;
 
 pub trait AsyncTransform<TInput: AsyncRead> {
-	fn transform_poll_read(&mut self, src: Pin<&mut TInput>, cx: &mut Context, buf: &mut [u8]) -> Poll<IoResult<TransformPosition>>;
+	fn transform_poll_read(
+		&mut self,
+		src: Pin<&mut TInput>,
+		cx: &mut Context,
+		buf: &mut [u8],
+	) -> Poll<IoResult<TransformPosition>>;
 
 	/// Contiguous specifically.
 	fn min_bytes_required(&self) -> usize {
@@ -60,12 +43,18 @@ pub trait AsyncTransform<TInput: AsyncRead> {
 }
 
 impl<T: AsyncRead> AsyncTransform<T> for Identity {
-	fn transform_poll_read(&mut self, src: Pin<&mut T>, cx: &mut Context, buf: &mut [u8]) -> Poll<IoResult<TransformPosition>> {
-		src.poll_read(cx, buf)
-			.map(|res| res.map(|count| match count {
+	fn transform_poll_read(
+		&mut self,
+		src: Pin<&mut T>,
+		cx: &mut Context,
+		buf: &mut [u8],
+	) -> Poll<IoResult<TransformPosition>> {
+		src.poll_read(cx, buf).map(|res| {
+			res.map(|count| match count {
 				0 => TransformPosition::Finished,
 				n => TransformPosition::Read(n),
-			}))	
+			})
+		})
 	}
 }
 
@@ -81,8 +70,9 @@ where
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Unpin + Default,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Unpin + Default,
 {
 	pub fn new(source: T, config: Option<Config>) -> Result<Self> {
 		Self::new_tx(source, Default::default(), config)
@@ -90,15 +80,17 @@ impl<T, Tx> TxCatcher<T, Tx>
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Unpin,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Unpin,
 {
 	pub fn new_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
-		RawStore::new(source, transform, config)
-			.map(|c| Self {
-				core: Arc::new(SharedStore{ raw: UnsafeCell::new(c) }),
-				pos: 0,
-			})
+		RawStore::new(source, transform, config).map(|c| Self {
+			core: Arc::new(SharedStore {
+				raw: UnsafeCell::new(c),
+			}),
+			pos: 0,
+		})
 	}
 
 	/// Acquire a new handle to this object, to begin a new
@@ -116,8 +108,9 @@ impl<T, Tx> TxCatcher<T, Tx>
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
-	where T: AsyncRead + Unpin + 'static,
-		Tx: AsyncTransform<T> + Unpin + 'static,
+where
+	T: AsyncRead + Unpin + 'static,
+	Tx: AsyncTransform<T> + Unpin + 'static,
 {
 	/// Read all bytes from the underlying stream
 	/// into the backing store in the current task.
@@ -127,30 +120,30 @@ impl<T, Tx> TxCatcher<T, Tx>
 }
 
 pub struct LoadAll<T, Tx>
-	where T: AsyncRead + Unpin + 'static,
-		Tx: AsyncTransform<T> + Unpin + 'static,
+where
+	T: AsyncRead + Unpin + 'static,
+	Tx: AsyncTransform<T> + Unpin + 'static,
 {
 	catcher: TxCatcher<T, Tx>,
 	in_pos: usize,
 }
 
 impl<T, Tx> LoadAll<T, Tx>
-	where T: AsyncRead + Unpin + 'static,
-		Tx: AsyncTransform<T> + Unpin + 'static,
+where
+	T: AsyncRead + Unpin + 'static,
+	Tx: AsyncTransform<T> + Unpin + 'static,
 {
 	fn new(catcher: TxCatcher<T, Tx>) -> Self {
 		let in_pos = catcher.pos;
 
-		Self {
-			catcher,
-			in_pos,
-		}
+		Self { catcher, in_pos }
 	}
 }
 
 impl<T, Tx> Future for LoadAll<T, Tx>
-	where T: AsyncRead + Unpin + 'static,
-		Tx: AsyncTransform<T> + Unpin + 'static,
+where
+	T: AsyncRead + Unpin + 'static,
+	Tx: AsyncTransform<T> + Unpin + 'static,
 {
 	type Output = TxCatcher<T, Tx>;
 
@@ -163,9 +156,11 @@ impl<T, Tx> Future for LoadAll<T, Tx>
 			let mut skip_attempt = self.catcher.skip(7680);
 
 			match Future::poll(Pin::new(&mut skip_attempt), cx) {
-				Poll::Ready(0) => { break },
+				Poll::Ready(0) => break,
 				Poll::Ready(n) => {},
-				Poll::Pending => { return Poll::Pending; }
+				Poll::Pending => {
+					return Poll::Pending;
+				},
 			}
 		}
 
@@ -176,16 +171,18 @@ impl<T, Tx> Future for LoadAll<T, Tx>
 }
 
 impl<T, Tx> AsyncRead for TxCatcher<T, Tx>
-	where T: AsyncRead + Unpin + 'static,
-		Tx: AsyncTransform<T> + Unpin + 'static,
+where
+	T: AsyncRead + Unpin + 'static,
+	Tx: AsyncTransform<T> + Unpin + 'static,
 {
 	fn poll_read(
-	    mut self: Pin<&mut Self>,
-	    cx: &mut Context,
-	    buf: &mut [u8],
+		mut self: Pin<&mut Self>,
+		cx: &mut Context,
+		buf: &mut [u8],
 	) -> Poll<IoResult<usize>> {
 		println!("Polling outer");
-		self.core.read_from_pos(self.pos, cx, buf)
+		self.core
+			.read_from_pos(self.pos, cx, buf)
 			.map(|(bytes_read, should_finalise_here)| {
 				println!("Mapping outer");
 
@@ -212,7 +209,8 @@ impl<T, Tx> AsyncRead for TxCatcher<T, Tx>
 						Finaliser::Smol => {
 							smol::Task::spawn(async move {
 								handle.do_finalise();
-							}).detach();
+							})
+							.detach();
 						},
 					}
 				}
@@ -228,27 +226,25 @@ impl<T, Tx> AsyncRead for TxCatcher<T, Tx>
 
 #[cfg(feature = "tokio-compat")]
 impl<T, Tx> TokioRead for TxCatcher<T, Tx>
-	where T: AsyncRead + Unpin + 'static,
-		Tx: AsyncTransform<T> + Unpin + 'static,
+where
+	T: AsyncRead + Unpin + 'static,
+	Tx: AsyncTransform<T> + Unpin + 'static,
 {
 	fn poll_read(
-	    mut self: Pin<&mut Self>,
-	    cx: &mut Context,
-	    buf: &mut [u8],
+		mut self: Pin<&mut Self>,
+		cx: &mut Context,
+		buf: &mut [u8],
 	) -> Poll<IoResult<usize>> {
 		AsyncRead::poll_read(self, cx, buf)
 	}
 }
 
 impl<T, Tx> AsyncSeek for TxCatcher<T, Tx>
-	where T: AsyncRead + Unpin + 'static,
-		Tx: AsyncTransform<T> + Unpin + 'static,
+where
+	T: AsyncRead + Unpin + 'static,
+	Tx: AsyncTransform<T> + Unpin + 'static,
 {
-	fn poll_seek(
-		mut self: Pin<&mut Self>,
-		cx: &mut Context,
-		pos: SeekFrom,
-	) -> Poll<IoResult<u64>> {
+	fn poll_seek(mut self: Pin<&mut Self>, cx: &mut Context, pos: SeekFrom) -> Poll<IoResult<u64>> {
 		let old_pos = self.pos as u64;
 
 		let (valid, new_pos) = match pos {
@@ -256,7 +252,7 @@ impl<T, Tx> AsyncSeek for TxCatcher<T, Tx>
 				// overflow expected in many cases.
 				let new_pos = old_pos.wrapping_add(adj as u64);
 				(adj >= 0 || (adj.abs() as u64) <= old_pos, new_pos)
-			}
+			},
 			SeekFrom::End(adj) => {
 				// Slower to load in the whole stream first, but safer.
 				// We could, in theory, use metadata as the basis,
@@ -269,10 +265,8 @@ impl<T, Tx> AsyncSeek for TxCatcher<T, Tx>
 				let len = self.core.len() as u64;
 				let new_pos = len.wrapping_add(adj as u64);
 				(adj >= 0 || (adj.abs() as u64) <= len, new_pos)
-			}
-			SeekFrom::Start(new_pos) => {
-				(true, new_pos)
-			}
+			},
+			SeekFrom::Start(new_pos) => (true, new_pos),
 		};
 
 		Poll::Ready(if valid {
@@ -285,7 +279,10 @@ impl<T, Tx> AsyncSeek for TxCatcher<T, Tx>
 			self.pos = new_pos.min(len) as usize;
 			Ok(self.pos as u64)
 		} else {
-			Err(IoError::new(IoErrorKind::InvalidInput, "Tried to seek before start of stream."))
+			Err(IoError::new(
+				IoErrorKind::InvalidInput,
+				"Tried to seek before start of stream.",
+			))
 		})
 	}
 }
@@ -306,15 +303,17 @@ impl<T, Tx> AsyncSeek for TxCatcher<T, Tx>
 
 #[derive(Debug)]
 pub(crate) struct SharedStore<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Unpin,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Unpin,
 {
 	raw: UnsafeCell<RawStore<T, Tx>>,
 }
 
 impl<T, Tx> SharedStore<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Unpin,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Unpin,
 {
 	// The main reason for employing `unsafe` here is *shared mutability*:
 	// due to the granularity of the locks we need, (i.e., a moving critical
@@ -328,40 +327,38 @@ impl<T, Tx> SharedStore<T, Tx>
 		unsafe { &mut *self.raw.get() }
 	}
 
-	fn read_from_pos(&self, pos: usize, cx: &mut Context, buffer: &mut [u8]) -> Poll<(IoResult<usize>, bool)> {
-		self.get_mut_ref()
-			.read_from_pos(pos, cx, buffer)
+	fn read_from_pos(
+		&self,
+		pos: usize,
+		cx: &mut Context,
+		buffer: &mut [u8],
+	) -> Poll<(IoResult<usize>, bool)> {
+		self.get_mut_ref().read_from_pos(pos, cx, buffer)
 	}
 
 	fn finaliser(&self) -> Finaliser {
-		self.get_mut_ref()
-			.config
-			.spawn_finaliser
-			.clone()
+		self.get_mut_ref().config.spawn_finaliser.clone()
 	}
 
 	fn len(&self) -> usize {
-		self.get_mut_ref()
-			.len()
+		self.get_mut_ref().len()
 	}
 
 	fn is_finalised(&self) -> bool {
-		self.get_mut_ref()
-			.finalised()
-			.is_source_finished()
+		self.get_mut_ref().finalised().is_source_finished()
 	}
 
 	fn do_finalise(&self) {
-		self.get_mut_ref()
-			.do_finalise()
+		self.get_mut_ref().do_finalise()
 	}
 }
 
 // Shared basis for the below cache-based seekables.
 #[derive(Debug)]
 pub(crate) struct RawStore<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Unpin,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Unpin,
 {
 	config: Config,
 
@@ -379,8 +376,9 @@ pub(crate) struct RawStore<T, Tx>
 }
 
 impl<T, Tx> RawStore<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Unpin,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Unpin,
 {
 	fn new(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
 		let config = config.unwrap_or_else(Default::default);
@@ -388,7 +386,7 @@ impl<T, Tx> RawStore<T, Tx>
 		let min_bytes = transform.min_bytes_required();
 
 		if config.chunk_size < min_bytes {
-			return Err(CatcherError::ChunkSize)
+			return Err(CatcherError::ChunkSize);
 		};
 
 		let mut start_size = if let Some(length) = config.length_hint {
@@ -434,12 +432,15 @@ impl<T, Tx> RawStore<T, Tx>
 	/// Returns `true` if a new handle must be spawned by the parent
 	/// to finalise in another thread.
 	fn finalise(&mut self) -> bool {
-		let state_on_call: FinaliseState = self.finalised.compare_and_swap(
-			FinaliseState::Live.into(),
-			FinaliseState::Finalising.into(),
-			Ordering::AcqRel
-		).into();
-		
+		let state_on_call: FinaliseState = self
+			.finalised
+			.compare_and_swap(
+				FinaliseState::Live.into(),
+				FinaliseState::Finalising.into(),
+				Ordering::AcqRel,
+			)
+			.into();
+
 		if state_on_call.is_source_live() {
 			if self.config.spawn_finaliser.run_elsewhere() {
 				true
@@ -457,14 +458,17 @@ impl<T, Tx> RawStore<T, Tx>
 			// If we don't want to use backing, then still remove the source.
 			// This state will prevent anyone from trying to use the backing store.
 			self.source = None;
-			self.finalised.store(FinaliseState::Finalising.into(), Ordering::Release);
+			self.finalised
+				.store(FinaliseState::Finalising.into(), Ordering::Release);
 			return;
 		}
 
 		let backing_len = self.len();
 
 		// Move the rope of bytes into the backing store.
-		let rope = self.rope.as_mut()
+		let rope = self
+			.rope
+			.as_mut()
 			.expect("Writes should only occur while the rope exists.");
 
 		if rope.len() > 1 {
@@ -475,8 +479,7 @@ impl<T, Tx> RawStore<T, Tx>
 			for el in rope.iter() {
 				let start = el.start_pos;
 				let end = el.end_pos;
-				back[start..end]
-					.copy_from_slice(&el.data[..end-start]);
+				back[start..end].copy_from_slice(&el.data[..end - start]);
 			}
 
 			// Insert the new backing store, but DO NOT purge the old.
@@ -514,7 +517,8 @@ impl<T, Tx> RawStore<T, Tx>
 
 		// It's crucial that we do this *last*, as this is the signal
 		// for other threads to migrate from rope to backing store.
-		self.finalised.store(FinaliseState::Finalised.into(), Ordering::Release);
+		self.finalised
+			.store(FinaliseState::Finalised.into(), Ordering::Release);
 	}
 
 	fn add_rope(&mut self) {
@@ -550,7 +554,9 @@ impl<T, Tx> RawStore<T, Tx>
 				// This ensures safety as we undo the aliasing
 				// in the above special case.
 				if rope.len() == 1 {
-					let el = rope.pop_front().expect("Length of rope was established as >= 1.");
+					let el = rope
+						.pop_front()
+						.expect("Length of rope was established as >= 1.");
 					ManuallyDrop::new(el.data);
 				}
 			}
@@ -580,7 +586,12 @@ impl<T, Tx> RawStore<T, Tx>
 	}
 
 	/// Returns read count, should_upgrade, should_finalise_external
-	fn read_from_pos(&mut self, pos: usize, cx: &mut Context, buf: &mut [u8]) -> Poll<(IoResult<usize>, bool)> {
+	fn read_from_pos(
+		&mut self,
+		pos: usize,
+		cx: &mut Context,
+		buf: &mut [u8],
+	) -> Poll<(IoResult<usize>, bool)> {
 		// Place read of finalised first to be certain that if we see finalised,
 		// then backing_len *must* be the true length.
 		let (loc, mut finalised) = self.get_location();
@@ -614,7 +625,7 @@ impl<T, Tx> RawStore<T, Tx>
 					println!("Trying lock");
 					let lock: *mut Mutex<()> = &mut self.lock;
 					let mut guard = unsafe {
-						let lock = & *lock;
+						let lock = &*lock;
 						lock.lock()
 					};
 
@@ -632,7 +643,8 @@ impl<T, Tx> RawStore<T, Tx>
 					// and might not!
 					remaining_in_store = backing_len - pos - read;
 					if remaining_in_store == 0 && finalised.is_source_live() {
-						if let Poll::Ready(read_count) = self.fill_from_source(cx, buf.len() - read) {
+						if let Poll::Ready(read_count) = self.fill_from_source(cx, buf.len() - read)
+						{
 							progress_before_pending = true;
 							if let Ok((read_count, finalise_elsewhere)) = read_count {
 								remaining_in_store += read_count;
@@ -660,22 +672,24 @@ impl<T, Tx> RawStore<T, Tx>
 				// * hit an error
 				// * or nothing remaining, AND finalised
 				if matches!(base_result, Some(Err(_)))
-					|| read == buf.len()
-					|| (finalised.is_source_finished() && backing_len == pos + read) {
+					|| read == buf.len() || (finalised.is_source_finished()
+					&& backing_len == pos + read)
+				{
 					break;
 				}
 			}
 
-			base_result
-				.unwrap_or(Ok(0))
-				.map(|_| read)
+			base_result.unwrap_or(Ok(0)).map(|_| read)
 		};
 
 		if loc == CacheReadLocation::Roped {
 			self.remove_rope_ref(finalised);
 		}
 
-		println!("end pbp {:?} out {:?} should:fin {:?}", progress_before_pending, out, should_finalise_external);
+		println!(
+			"end pbp {:?} out {:?} should:fin {:?}",
+			progress_before_pending, out, should_finalise_external
+		);
 
 		if progress_before_pending {
 			Poll::Ready((out, should_finalise_external))
@@ -690,7 +704,11 @@ impl<T, Tx> RawStore<T, Tx>
 	// * drawing bytes from the source
 	// * modifying len
 	// * modifying encoder state
-	fn fill_from_source(&mut self, cx: &mut Context, mut bytes_needed: usize) -> Poll<IoResult<(usize, bool)>> {
+	fn fill_from_source(
+		&mut self,
+		cx: &mut Context,
+		mut bytes_needed: usize,
+	) -> Poll<IoResult<(usize, bool)>> {
 		println!("From source");
 
 		let minimum_to_write = self.transform.min_bytes_required();
@@ -708,10 +726,13 @@ impl<T, Tx> RawStore<T, Tx>
 		let mut progress_before_pending = false;
 
 		loop {
-			let rope = self.rope.as_mut()
+			let rope = self
+				.rope
+				.as_mut()
 				.expect("Writes should only occur while the rope exists.");
 
-			let rope_el = rope.back_mut()
+			let rope_el = rope
+				.back_mut()
 				.expect("There will always be at least one element in rope.");
 
 			let old_len = rope_el.data.len();
@@ -723,18 +744,20 @@ impl<T, Tx> RawStore<T, Tx>
 			if space < minimum_to_write {
 				let end = rope_el.end_pos;
 				// Make a new chunk!
-				rope.push_back(BufferChunk::new(
-					end,
-					self.config.chunk_size,
-				));
+				rope.push_back(BufferChunk::new(end, self.config.chunk_size));
 			} else {
 				rope_el.data.resize(new_len, 0);
 
-				let src = self.source
+				let src = self
+					.source
 					.as_mut()
 					.expect("Source must exist while not finalised.");
 
-				if let Poll::Ready(pos) = self.transform.transform_poll_read(Pin::new(src), cx, &mut rope_el.data[old_len..]) {
+				if let Poll::Ready(pos) = self.transform.transform_poll_read(
+					Pin::new(src),
+					cx,
+					&mut rope_el.data[old_len..],
+				) {
 					progress_before_pending = true;
 
 					println!("Transform gave goods {:?}.", pos);
@@ -755,7 +778,7 @@ impl<T, Tx> RawStore<T, Tx>
 						},
 						Err(e) => {
 							recorded_error = Some(Err(e));
-						}
+						},
 					}
 				} else {
 					// Pending
@@ -763,25 +786,37 @@ impl<T, Tx> RawStore<T, Tx>
 					break;
 				}
 
-				if self.finalised().is_source_finished() || remaining_bytes < minimum_to_write || recorded_error.is_some() {
+				if self.finalised().is_source_finished()
+					|| remaining_bytes < minimum_to_write
+					|| recorded_error.is_some()
+				{
 					break;
 				}
 			}
 		}
 
 		if progress_before_pending {
-			Poll::Ready(recorded_error.unwrap_or(Ok((bytes_needed - remaining_bytes, spawn_new_finaliser))))
+			Poll::Ready(
+				recorded_error.unwrap_or(Ok((bytes_needed - remaining_bytes, spawn_new_finaliser))),
+			)
 		} else {
 			Poll::Pending
 		}
 	}
 
 	#[inline]
-	fn read_from_local(&self, mut pos: usize, loc: CacheReadLocation, buf: &mut [u8], count: usize) -> usize {
+	fn read_from_local(
+		&self,
+		mut pos: usize,
+		loc: CacheReadLocation,
+		buf: &mut [u8],
+		count: usize,
+	) -> usize {
 		use CacheReadLocation::*;
 		match loc {
 			Backed => {
-				let store = self.backing_store
+				let store = self
+					.backing_store
 					.as_ref()
 					.expect("Reader should not attempt to use a backing store before it exists");
 
@@ -794,10 +829,10 @@ impl<T, Tx> RawStore<T, Tx>
 				}
 			},
 			Roped => {
-				let rope = self.rope
-					.as_ref()
-					.expect("Rope should still exist while any handles hold a ::Roped(_) \
-							 (and thus an Arc)");
+				let rope = self.rope.as_ref().expect(
+					"Rope should still exist while any handles hold a ::Roped(_) \
+							 (and thus an Arc)",
+				);
 
 				let mut written = 0;
 
@@ -815,7 +850,8 @@ impl<T, Tx> RawStore<T, Tx>
 
 						let next_len = written + to_write;
 
-						buf[written..next_len].copy_from_slice(&link.data[first_el..first_el + to_write]);
+						buf[written..next_len]
+							.copy_from_slice(&link.data[first_el..first_el + to_write]);
 
 						written = next_len;
 						pos += to_write;
@@ -827,14 +863,15 @@ impl<T, Tx> RawStore<T, Tx>
 				}
 
 				count
-			}
+			},
 		}
 	}
 }
 
 impl<T, Tx> Drop for RawStore<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Unpin,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Unpin,
 {
 	fn drop(&mut self) {
 		// This is necesary to prevent unsoundness.
@@ -849,21 +886,33 @@ impl<T, Tx> Drop for RawStore<T, Tx>
 // We need to declare these as thread-safe, since we don't have a mutex around
 // several raw fields. However, the way that they are used should remain
 // consistent.
-unsafe impl<T,Tx> Sync for SharedStore<T,Tx> where T: AsyncRead + Unpin, Tx: AsyncTransform<T> + Unpin {}
-unsafe impl<T,Tx> Send for SharedStore<T,Tx> where T: AsyncRead + Unpin, Tx: AsyncTransform<T> + Unpin {}
+unsafe impl<T, Tx> Sync for SharedStore<T, Tx>
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Unpin,
+{
+}
+unsafe impl<T, Tx> Send for SharedStore<T, Tx>
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Unpin,
+{
+}
 
 #[async_trait]
 pub trait AsyncReadSkipExt {
-    async fn skip(&mut self, amt: usize) -> usize where Self: Sized;
+	async fn skip(&mut self, amt: usize) -> usize
+	where
+		Self: Sized;
 }
 
 #[async_trait]
 impl<R: AsyncRead + Sized + Unpin + Send> AsyncReadSkipExt for R {
-    async fn skip(&mut self, amt: usize) -> usize {
-        io::copy(&mut self.take(amt as u64), &mut io::sink())
-        	.await
-        	.unwrap_or(0) as usize
-    }
+	async fn skip(&mut self, amt: usize) -> usize {
+		io::copy(&mut self.take(amt as u64), &mut io::sink())
+			.await
+			.unwrap_or(0) as usize
+	}
 }
 
 #[cfg(test)]

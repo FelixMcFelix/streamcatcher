@@ -1,6 +1,4 @@
-use std::io::{
-	Read,
-};
+use std::io::Read;
 use streamcatcher::*;
 
 #[test]
@@ -21,7 +19,10 @@ fn read_after_complete() {
 	let catcher = Catcher::new(&INPUT[..], None).unwrap();
 	let catcher_clone = catcher.new_handle();
 
-	let out_1 = catcher_clone.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
+	let out_1 = catcher_clone
+		.bytes()
+		.map(|x| x.unwrap())
+		.collect::<Vec<_>>();
 	let out_2 = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
 
 	assert_eq!(out_1[..], INPUT[..]);

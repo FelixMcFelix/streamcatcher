@@ -1,9 +1,6 @@
 //! Top-of-line description.
 use crate::*;
-use parking_lot::{
-	lock_api::MutexGuard,
-	Mutex,
-};
+use parking_lot::{lock_api::MutexGuard, Mutex};
 use std::{
 	cell::UnsafeCell,
 	collections::LinkedList,
@@ -16,16 +13,9 @@ use std::{
 		Seek,
 		SeekFrom,
 	},
-	mem::{
-		self,
-		ManuallyDrop,
-	},
+	mem::{self, ManuallyDrop},
 	sync::{
-		atomic::{
-			AtomicU8,
-			AtomicUsize, 
-			Ordering,
-		},
+		atomic::{AtomicU8, AtomicUsize, Ordering},
 		Arc,
 	},
 };
@@ -63,8 +53,9 @@ where
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
-	where T: Read,
-		Tx: Transform<T> + Default,
+where
+	T: Read,
+	Tx: Transform<T> + Default,
 {
 	pub fn new(source: T, config: Option<Config>) -> Result<Self> {
 		Self::new_tx(source, Default::default(), config)
@@ -72,15 +63,17 @@ impl<T, Tx> TxCatcher<T, Tx>
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
-	where T: Read,
-		Tx: Transform<T>,
+where
+	T: Read,
+	Tx: Transform<T>,
 {
 	pub fn new_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
-		RawStore::new(source, transform, config)
-			.map(|c| Self {
-				core: Arc::new(SharedStore{ raw: UnsafeCell::new(c) }),
-				pos: 0,
-			})
+		RawStore::new(source, transform, config).map(|c| Self {
+			core: Arc::new(SharedStore {
+				raw: UnsafeCell::new(c),
+			}),
+			pos: 0,
+		})
 	}
 
 	/// Acquire a new handle to this object, to begin a new
@@ -98,8 +91,9 @@ impl<T, Tx> TxCatcher<T, Tx>
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
-	where T: Read + 'static,
-		Tx: Transform<T> + 'static,
+where
+	T: Read + 'static,
+	Tx: Transform<T> + 'static,
 {
 	/// Spawn a new thread to read all bytes from the underlying stream
 	/// into the backing store.
@@ -120,8 +114,9 @@ impl<T, Tx> TxCatcher<T, Tx>
 }
 
 impl<T, Tx> Read for TxCatcher<T, Tx>
-	where T: Read + 'static,
-		Tx: Transform<T> + 'static,
+where
+	T: Read + 'static,
+	Tx: Transform<T> + 'static,
 {
 	fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
 		let (bytes_read, should_finalise_here) = self.core.read_from_pos(self.pos, buf);
@@ -140,8 +135,9 @@ impl<T, Tx> Read for TxCatcher<T, Tx>
 }
 
 impl<T, Tx> Seek for TxCatcher<T, Tx>
-	where T: Read + 'static,
-		Tx: Transform<T> + 'static,
+where
+	T: Read + 'static,
+	Tx: Transform<T> + 'static,
 {
 	fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
 		let old_pos = self.pos as u64;
@@ -151,7 +147,7 @@ impl<T, Tx> Seek for TxCatcher<T, Tx>
 				// overflow expected in many cases.
 				let new_pos = old_pos.wrapping_add(adj as u64);
 				(adj >= 0 || (adj.abs() as u64) <= old_pos, new_pos)
-			}
+			},
 			SeekFrom::End(adj) => {
 				// Slower to load in the whole stream first, but safer.
 				// We could, in theory, use metadata as the basis,
@@ -162,10 +158,8 @@ impl<T, Tx> Seek for TxCatcher<T, Tx>
 				let len = self.core.len() as u64;
 				let new_pos = len.wrapping_add(adj as u64);
 				(adj >= 0 || (adj.abs() as u64) <= len, new_pos)
-			}
-			SeekFrom::Start(new_pos) => {
-				(true, new_pos)
-			}
+			},
+			SeekFrom::Start(new_pos) => (true, new_pos),
 		};
 
 		if valid {
@@ -178,22 +172,27 @@ impl<T, Tx> Seek for TxCatcher<T, Tx>
 			self.pos = new_pos.min(len) as usize;
 			Ok(self.pos as u64)
 		} else {
-			Err(IoError::new(IoErrorKind::InvalidInput, "Tried to seek before start of stream."))
+			Err(IoError::new(
+				IoErrorKind::InvalidInput,
+				"Tried to seek before start of stream.",
+			))
 		}
 	}
 }
 
 #[derive(Debug)]
 pub(crate) struct SharedStore<T, Tx>
-	where T: Read,
-		Tx: Transform<T>,
+where
+	T: Read,
+	Tx: Transform<T>,
 {
 	raw: UnsafeCell<RawStore<T, Tx>>,
 }
 
 impl<T, Tx> SharedStore<T, Tx>
-	where T: Read,
-		Tx: Transform<T>,
+where
+	T: Read,
+	Tx: Transform<T>,
 {
 	// The main reason for employing `unsafe` here is *shared mutability*:
 	// due to the granularity of the locks we need, (i.e., a moving critical
@@ -208,32 +207,28 @@ impl<T, Tx> SharedStore<T, Tx>
 	}
 
 	fn read_from_pos(&self, pos: usize, buffer: &mut [u8]) -> (IoResult<usize>, bool) {
-		self.get_mut_ref()
-			.read_from_pos(pos, buffer)
+		self.get_mut_ref().read_from_pos(pos, buffer)
 	}
 
 	fn len(&self) -> usize {
-		self.get_mut_ref()
-			.len()
+		self.get_mut_ref().len()
 	}
 
 	fn is_finalised(&self) -> bool {
-		self.get_mut_ref()
-			.finalised()
-			.is_source_finished()
+		self.get_mut_ref().finalised().is_source_finished()
 	}
 
 	fn do_finalise(&self) {
-		self.get_mut_ref()
-			.do_finalise()
+		self.get_mut_ref().do_finalise()
 	}
 }
 
 // Shared basis for the below cache-based seekables.
 #[derive(Debug)]
 pub(crate) struct RawStore<T, Tx>
-	where T: Read,
-		Tx: Transform<T>,
+where
+	T: Read,
+	Tx: Transform<T>,
 {
 	config: Config,
 
@@ -251,19 +246,20 @@ pub(crate) struct RawStore<T, Tx>
 }
 
 impl<T, Tx> RawStore<T, Tx>
-	where T: Read,
-		Tx: Transform<T>,
+where
+	T: Read,
+	Tx: Transform<T>,
 {
 	fn new(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
 		let config = config.unwrap_or_else(Default::default);
 		let min_bytes = transform.min_bytes_required();
 
 		if config.chunk_size < min_bytes {
-			return Err(CatcherError::ChunkSize)
+			return Err(CatcherError::ChunkSize);
 		};
 
 		if !config.spawn_finaliser.is_sync() {
-			return Err(CatcherError::IllegalFinaliser)
+			return Err(CatcherError::IllegalFinaliser);
 		};
 
 		let mut start_size = if let Some(length) = config.length_hint {
@@ -309,12 +305,15 @@ impl<T, Tx> RawStore<T, Tx>
 	/// Returns `true` if a new handle must be spawned by the parent
 	/// to finalise in another thread.
 	fn finalise(&mut self) -> bool {
-		let state_on_call: FinaliseState = self.finalised.compare_and_swap(
-			FinaliseState::Live.into(),
-			FinaliseState::Finalising.into(),
-			Ordering::AcqRel
-		).into();
-		
+		let state_on_call: FinaliseState = self
+			.finalised
+			.compare_and_swap(
+				FinaliseState::Live.into(),
+				FinaliseState::Finalising.into(),
+				Ordering::AcqRel,
+			)
+			.into();
+
 		if state_on_call.is_source_live() {
 			if self.config.spawn_finaliser.run_elsewhere() {
 				true
@@ -332,14 +331,17 @@ impl<T, Tx> RawStore<T, Tx>
 			// If we don't want to use backing, then still remove the source.
 			// This state will prevent anyone from trying to use the backing store.
 			self.source = None;
-			self.finalised.store(FinaliseState::Finalising.into(), Ordering::Release);
+			self.finalised
+				.store(FinaliseState::Finalising.into(), Ordering::Release);
 			return;
 		}
 
 		let backing_len = self.len();
 
 		// Move the rope of bytes into the backing store.
-		let rope = self.rope.as_mut()
+		let rope = self
+			.rope
+			.as_mut()
 			.expect("Writes should only occur while the rope exists.");
 
 		if rope.len() > 1 {
@@ -350,8 +352,7 @@ impl<T, Tx> RawStore<T, Tx>
 			for el in rope.iter() {
 				let start = el.start_pos;
 				let end = el.end_pos;
-				back[start..end]
-					.copy_from_slice(&el.data[..end-start]);
+				back[start..end].copy_from_slice(&el.data[..end - start]);
 			}
 
 			// Insert the new backing store, but DO NOT purge the old.
@@ -389,7 +390,8 @@ impl<T, Tx> RawStore<T, Tx>
 
 		// It's crucial that we do this *last*, as this is the signal
 		// for other threads to migrate from rope to backing store.
-		self.finalised.store(FinaliseState::Finalised.into(), Ordering::Release);
+		self.finalised
+			.store(FinaliseState::Finalised.into(), Ordering::Release);
 	}
 
 	fn add_rope(&mut self) {
@@ -425,7 +427,9 @@ impl<T, Tx> RawStore<T, Tx>
 				// This ensures safety as we undo the aliasing
 				// in the above special case.
 				if rope.len() == 1 {
-					let el = rope.pop_front().expect("Length of rope was established as >= 1.");
+					let el = rope
+						.pop_front()
+						.expect("Length of rope was established as >= 1.");
 					ManuallyDrop::new(el.data);
 				}
 			}
@@ -484,7 +488,7 @@ impl<T, Tx> RawStore<T, Tx>
 					// while holding mutability to the other members.
 					let lock: *mut Mutex<()> = &mut self.lock;
 					let guard = unsafe {
-						let lock = & *lock;
+						let lock = &*lock;
 						lock.lock()
 					};
 
@@ -520,15 +524,14 @@ impl<T, Tx> RawStore<T, Tx>
 				// * hit an error
 				// * or nothing remaining, AND finalised
 				if matches!(base_result, Some(Err(_)))
-					|| read == buf.len()
-					|| (finalised.is_source_finished() && backing_len == pos + read) {
+					|| read == buf.len() || (finalised.is_source_finished()
+					&& backing_len == pos + read)
+				{
 					break;
 				}
 			}
 
-			base_result
-				.unwrap_or(Ok(0))
-				.map(|_| read)
+			base_result.unwrap_or(Ok(0)).map(|_| read)
 		};
 
 		if loc == CacheReadLocation::Roped {
@@ -558,10 +561,13 @@ impl<T, Tx> RawStore<T, Tx>
 		let mut spawn_new_finaliser = false;
 
 		loop {
-			let rope = self.rope.as_mut()
+			let rope = self
+				.rope
+				.as_mut()
 				.expect("Writes should only occur while the rope exists.");
 
-			let rope_el = rope.back_mut()
+			let rope_el = rope
+				.back_mut()
 				.expect("There will always be at least one element in rope.");
 
 			let old_len = rope_el.data.len();
@@ -573,18 +579,18 @@ impl<T, Tx> RawStore<T, Tx>
 			if space < minimum_to_write {
 				let end = rope_el.end_pos;
 				// Make a new chunk!
-				rope.push_back(BufferChunk::new(
-					end,
-					self.config.chunk_size,
-				));
+				rope.push_back(BufferChunk::new(end, self.config.chunk_size));
 			} else {
 				rope_el.data.resize(new_len, 0);
 
-				let src = self.source
+				let src = self
+					.source
 					.as_mut()
 					.expect("Source must exist while not finalised.");
 
-				let pos = self.transform.transform_read(src, &mut rope_el.data[old_len..]);
+				let pos = self
+					.transform
+					.transform_read(src, &mut rope_el.data[old_len..]);
 				match pos {
 					Ok(TransformPosition::Read(len)) => {
 						rope_el.end_pos += len;
@@ -601,24 +607,34 @@ impl<T, Tx> RawStore<T, Tx>
 					},
 					Err(e) => {
 						recorded_error = Some(Err(e));
-					}
+					},
 				}
 
-				if self.finalised().is_source_finished() || remaining_bytes < minimum_to_write || recorded_error.is_some() {
+				if self.finalised().is_source_finished()
+					|| remaining_bytes < minimum_to_write
+					|| recorded_error.is_some()
+				{
 					break;
 				}
 			}
-			}
+		}
 
 		recorded_error.unwrap_or(Ok((bytes_needed - remaining_bytes, spawn_new_finaliser)))
 	}
 
 	#[inline]
-	fn read_from_local(&self, mut pos: usize, loc: CacheReadLocation, buf: &mut [u8], count: usize) -> usize {
+	fn read_from_local(
+		&self,
+		mut pos: usize,
+		loc: CacheReadLocation,
+		buf: &mut [u8],
+		count: usize,
+	) -> usize {
 		use CacheReadLocation::*;
 		match loc {
 			Backed => {
-				let store = self.backing_store
+				let store = self
+					.backing_store
 					.as_ref()
 					.expect("Reader should not attempt to use a backing store before it exists");
 
@@ -631,10 +647,10 @@ impl<T, Tx> RawStore<T, Tx>
 				}
 			},
 			Roped => {
-				let rope = self.rope
-					.as_ref()
-					.expect("Rope should still exist while any handles hold a ::Roped(_) \
-							 (and thus an Arc)");
+				let rope = self.rope.as_ref().expect(
+					"Rope should still exist while any handles hold a ::Roped(_) \
+							 (and thus an Arc)",
+				);
 
 				let mut written = 0;
 
@@ -652,7 +668,8 @@ impl<T, Tx> RawStore<T, Tx>
 
 						let next_len = written + to_write;
 
-						buf[written..next_len].copy_from_slice(&link.data[first_el..first_el + to_write]);
+						buf[written..next_len]
+							.copy_from_slice(&link.data[first_el..first_el + to_write]);
 
 						written = next_len;
 						pos += to_write;
@@ -664,14 +681,15 @@ impl<T, Tx> RawStore<T, Tx>
 				}
 
 				count
-			}
+			},
 		}
 	}
 }
 
 impl<T, Tx> Drop for RawStore<T, Tx>
-	where T: Read,
-		Tx: Transform<T>,
+where
+	T: Read,
+	Tx: Transform<T>,
 {
 	fn drop(&mut self) {
 		// This is necesary to prevent unsoundness.
@@ -686,38 +704,51 @@ impl<T, Tx> Drop for RawStore<T, Tx>
 // We need to declare these as thread-safe, since we don't have a mutex around
 // several raw fields. However, the way that they are used should remain
 // consistent.
-unsafe impl<T,Tx> Sync for SharedStore<T,Tx> where T: Read, Tx: Transform<T> {}
-unsafe impl<T,Tx> Send for SharedStore<T,Tx> where T: Read, Tx: Transform<T> {}
+unsafe impl<T, Tx> Sync for SharedStore<T, Tx>
+where
+	T: Read,
+	Tx: Transform<T>,
+{
+}
+unsafe impl<T, Tx> Send for SharedStore<T, Tx>
+where
+	T: Read,
+	Tx: Transform<T>,
+{
+}
 
 pub trait ReadSkipExt {
-    fn skip(&mut self, amt: usize) -> usize where Self: Sized;
+	fn skip(&mut self, amt: usize) -> usize
+	where
+		Self: Sized;
 }
 
 impl<R: Read + Sized> ReadSkipExt for R {
-    fn skip(&mut self, amt: usize) -> usize {
-        io::copy(&mut self.by_ref().take(amt as u64), &mut io::sink()).unwrap_or(0) as usize
-    }
+	fn skip(&mut self, amt: usize) -> usize {
+		io::copy(&mut self.by_ref().take(amt as u64), &mut io::sink()).unwrap_or(0) as usize
+	}
 }
 
 #[cfg(test)]
 mod tests {
 	use crate::*;
 
-	#[cfg(all(feature = "async", feature = "smol-compat", feature = "tokio-compat", feature = "async-std-compat"))]
+	#[cfg(all(
+		feature = "async",
+		feature = "smol-compat",
+		feature = "tokio-compat",
+		feature = "async-std-compat"
+	))]
 	#[test]
 	fn only_sync_finalisers() {
 		const INPUT: [u8; 1] = [0];
 
 		use Finaliser::*;
-		let mut illegals = vec![
-			Finaliser::AsyncStd,
-			Finaliser::Tokio,
-			Finaliser::Smol,
-		];
+		let mut illegals = vec![Finaliser::AsyncStd, Finaliser::Tokio, Finaliser::Smol];
 
 		for fin in illegals.drain(0..) {
 			let mut cfg = Config::new();
-				
+
 			cfg.spawn_finaliser(fin);
 
 			let catcher = Catcher::new(&INPUT[..], Some(cfg));

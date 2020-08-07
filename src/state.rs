@@ -1,4 +1,3 @@
-use crate::*;
 #[cfg(feature = "async")]
 use crate::future::{
 	AsyncTransform,
@@ -6,6 +5,7 @@ use crate::future::{
 	SharedStore as AsyncSharedStore,
 	TxCatcher as AsyncTxCatcher,
 };
+use crate::*;
 #[cfg(feature = "async")]
 use futures::io::AsyncRead;
 #[cfg(feature = "standard")]
@@ -22,8 +22,9 @@ pub trait Stateful {
 
 #[cfg(feature = "standard")]
 impl<T, Tx> Stateful for TxCatcher<T, Tx>
-	where T: Read,
-		Tx: Transform<T> + Stateful,
+where
+	T: Read,
+	Tx: Transform<T> + Stateful,
 {
 	type State = <Tx as Stateful>::State;
 
@@ -34,8 +35,9 @@ impl<T, Tx> Stateful for TxCatcher<T, Tx>
 
 #[cfg(feature = "standard")]
 impl<T, Tx> Stateful for SharedStore<T, Tx>
-	where T: Read,
-		Tx: Transform<T> + Stateful,
+where
+	T: Read,
+	Tx: Transform<T> + Stateful,
 {
 	type State = <Tx as Stateful>::State;
 
@@ -46,8 +48,9 @@ impl<T, Tx> Stateful for SharedStore<T, Tx>
 
 #[cfg(feature = "standard")]
 impl<T, Tx> Stateful for RawStore<T, Tx>
-	where T: Read,
-		Tx: Transform<T> + Stateful,
+where
+	T: Read,
+	Tx: Transform<T> + Stateful,
 {
 	type State = <Tx as Stateful>::State;
 
@@ -58,8 +61,9 @@ impl<T, Tx> Stateful for RawStore<T, Tx>
 
 #[cfg(feature = "async")]
 impl<T, Tx> Stateful for AsyncTxCatcher<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Stateful + Unpin,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Stateful + Unpin,
 {
 	type State = <Tx as Stateful>::State;
 
@@ -70,8 +74,9 @@ impl<T, Tx> Stateful for AsyncTxCatcher<T, Tx>
 
 #[cfg(feature = "async")]
 impl<T, Tx> Stateful for AsyncSharedStore<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Stateful + Unpin,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Stateful + Unpin,
 {
 	type State = <Tx as Stateful>::State;
 
@@ -82,8 +87,9 @@ impl<T, Tx> Stateful for AsyncSharedStore<T, Tx>
 
 #[cfg(feature = "async")]
 impl<T, Tx> Stateful for AsyncRawStore<T, Tx>
-	where T: AsyncRead + Unpin,
-		Tx: AsyncTransform<T> + Stateful + Unpin,
+where
+	T: AsyncRead + Unpin,
+	Tx: AsyncTransform<T> + Stateful + Unpin,
 {
 	type State = <Tx as Stateful>::State;
 

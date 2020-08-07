@@ -6,9 +6,9 @@ pub mod future;
 mod standard;
 mod state;
 
-pub use state::Stateful;
 #[cfg(feature = "standard")]
 pub use standard::*;
+pub use state::Stateful;
 
 use core::result::Result as CoreResult;
 #[cfg(feature = "async")]
@@ -152,7 +152,7 @@ impl BufferChunk {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq,)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CacheReadLocation {
 	Roped,
 	Backed,

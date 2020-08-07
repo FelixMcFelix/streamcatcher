@@ -1,18 +1,7 @@
-use futures::io::{
-	AsyncRead,
-	AsyncReadExt,
-};
-use streamcatcher::{
-	future::*,
-	Config,
-	Finaliser,
-	Result,
-};
 #[cfg(feature = "tokio-compat")]
-use ::tokio::io::{
-	AsyncRead as TokioRead,
-	AsyncSeek as TokioSeek,
-};
+use ::tokio::io::{AsyncRead as TokioRead, AsyncSeek as TokioSeek};
+use futures::io::{AsyncRead, AsyncReadExt};
+use streamcatcher::{future::*, Config, Finaliser, Result};
 
 async fn identity() -> Result<()> {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -38,19 +27,12 @@ async fn identity() -> Result<()> {
 
 #[cfg(feature = "smol-compat")]
 mod smol {
-	use futures::io::{
-		AsyncRead,
-		AsyncReadExt,
-	};
-	use streamcatcher::{
-		future::*,
-		Config,
-		Finaliser,
-	};
+	use futures::io::{AsyncRead, AsyncReadExt};
+	use streamcatcher::{future::*, Config, Finaliser};
 
 	#[test]
 	fn identity() {
-		smol::run(async {identity()});
+		smol::run(async { identity() });
 	}
 
 	#[test]
@@ -59,7 +41,7 @@ mod smol {
 
 		smol::run(async {
 			let mut cfg = Config::new();
-				
+
 			cfg.spawn_finaliser(Finaliser::Smol);
 
 			let mut catcher = Catcher::new(&INPUT[..], None).unwrap();
@@ -83,15 +65,8 @@ mod smol {
 
 #[cfg(feature = "tokio-compat")]
 mod tokio {
-	use futures::io::{
-		AsyncRead,
-		AsyncReadExt,
-	};
-	use streamcatcher::{
-		future::*,
-		Config,
-		Finaliser,
-	};
+	use futures::io::{AsyncRead, AsyncReadExt};
+	use streamcatcher::{future::*, Config, Finaliser};
 
 	#[tokio::test]
 	async fn identity() {
