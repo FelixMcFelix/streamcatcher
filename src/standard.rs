@@ -1,20 +1,9 @@
 //! Top-of-line description.
 
-#[cfg(any(feature = "async", feature = "tokio-compat"))]
-use crate::{
-	CatcherError,
-	Config,
-	Result,
-	TransformPosition,
-};
-use core::{
-	pin::Pin,
-	result::Result as CoreResult,
-	task::{Context, Poll},
-};
-use futures::{
-	io::{AsyncRead, AsyncSeek},
-	lock::{Mutex, MutexGuard},
+use crate::*;
+use parking_lot::{
+	lock_api::MutexGuard,
+	Mutex,
 };
 use std::{
 	cell::UnsafeCell,
@@ -43,14 +32,11 @@ use std::{
 	},
 };
 
-pub trait AsyncTransform<TInput: AsyncRead> {
-	fn transform_poll_read(&mut self, src: Pin<&mut TInput>, cx: &mut Context, buf: &mut [u8]) -> Poll<IoResult<TransformPosition>>;
+/// The basics.
+pub type Catcher<T> = TxCatcher<T, Identity>;
 
-	// fn poll_read(
-	//     self: Pin<&mut Self>,
-	//     cx: &mut Context,
-	//     buf: &mut [u8]
-	// ) -> Poll<IoResult<usize>>
+pub trait Transform<TInput: Read> {
+	fn transform_read(&mut self, src: &mut TInput, buf: &mut [u8]) -> IoResult<TransformPosition>;
 
 	/// Contiguous specifically.
 	fn min_bytes_required(&self) -> usize {
@@ -58,10 +44,7 @@ pub trait AsyncTransform<TInput: AsyncRead> {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct AsyncIdentity {}
-
-impl<T: AsyncRead> AsyncTransform<T> for AsyncIdentity {
+impl<T: Read> Transform<T> for Identity {
 	fn transform_read(&mut self, src: &mut T, buf: &mut [u8]) -> IoResult<TransformPosition> {
 		Ok(match src.read(buf)? {
 			0 => TransformPosition::Finished,
@@ -74,34 +57,32 @@ impl<T: AsyncRead> AsyncTransform<T> for AsyncIdentity {
 /// Test desc.
 pub struct TxCatcher<T, Tx>
 where
-	T: AsyncRead,
-	Tx: AsyncTransform<T>,
+	T: Read,
+	Tx: Transform<T>,
 {
-	core: Arc<SharedStore<T, Tx>>,
-	pos: usize,
+	pub(crate) core: Arc<SharedStore<T, Tx>>,
+	pub(crate) pos: usize,
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
-	where T: AsyncRead,
-		Tx: AsyncTransform<T> + Default,
+	where T: Read,
+		Tx: Transform<T> + Default,
 {
-	pub fn new(source: T, config: Option<Config>) -> Self {
+	pub fn new(source: T, config: Option<Config>) -> Result<Self> {
 		Self::new_tx(source, Default::default(), config)
 	}
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
-	where T: AsyncRead,
-		Tx: AsyncTransform<T>,
+	where T: Read,
+		Tx: Transform<T>,
 {
-	pub fn new_tx(source: T, transform: Tx, config: Option<Config>) -> Self {
-		let core_raw = RawStore::new(source, transform, config)
-			.expect("This should only be fallible for Opus caches.");
-
-		Self {
-			core: Arc::new(SharedStore{ raw: UnsafeCell::new(core_raw) }),
-			pos: 0,
-		}
+	pub fn new_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
+		RawStore::new(source, transform, config)
+			.map(|c| Self {
+				core: Arc::new(SharedStore{ raw: UnsafeCell::new(c) }),
+				pos: 0,
+			})
 	}
 
 	/// Acquire a new handle to this object, to begin a new
@@ -119,8 +100,8 @@ impl<T, Tx> TxCatcher<T, Tx>
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
-	where T: AsyncRead + 'static,
-		Tx: AsyncTransform<T> + 'static,
+	where T: Read + 'static,
+		Tx: Transform<T> + 'static,
 {
 	/// Spawn a new thread to read all bytes from the underlying stream
 	/// into the backing store.
@@ -140,23 +121,19 @@ impl<T, Tx> TxCatcher<T, Tx>
 	}
 }
 
-impl<T, Tx> AsyncRead for TxCatcher<T, Tx>
-	where T: AsyncRead + 'static,
-		Tx: AsyncTransform<T> + 'static,
+impl<T, Tx> Read for TxCatcher<T, Tx>
+	where T: Read + 'static,
+		Tx: Transform<T> + 'static,
 {
-	fn poll_read(
-	    self: Pin<&mut Self>,
-	    cx: &mut Context,
-	    buf: &mut [u8],
-	) -> Poll<Result<usize, Error>> {
-		let (bytes_read, should_finalise_here) = self.core.read_from_pos(self.pos, cx, buf);
+	fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+		let (bytes_read, should_finalise_here) = self.core.read_from_pos(self.pos, buf);
 
 		if should_finalise_here {
 			let handle = self.core.clone();
 			std::thread::spawn(move || handle.do_finalise());
 		}
 
-		if let Poll::Ready(Ok(size)) = bytes_read {
+		if let Ok(size) = bytes_read {
 			self.pos += size;
 		}
 
@@ -165,8 +142,8 @@ impl<T, Tx> AsyncRead for TxCatcher<T, Tx>
 }
 
 impl<T, Tx> Seek for TxCatcher<T, Tx>
-	where T: AsyncRead + 'static,
-		Tx: AsyncTransform<T> + 'static,
+	where T: Read + 'static,
+		Tx: Transform<T> + 'static,
 {
 	fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
 		let old_pos = self.pos as u64;
@@ -209,16 +186,16 @@ impl<T, Tx> Seek for TxCatcher<T, Tx>
 }
 
 #[derive(Debug)]
-struct SharedStore<T, Tx>
-	where T: AsyncRead,
-		Tx: AsyncTransform<T>,
+pub(crate) struct SharedStore<T, Tx>
+	where T: Read,
+		Tx: Transform<T>,
 {
 	raw: UnsafeCell<RawStore<T, Tx>>,
 }
 
 impl<T, Tx> SharedStore<T, Tx>
-	where T: AsyncRead,
-		Tx: AsyncTransform<T>,
+	where T: Read,
+		Tx: Transform<T>,
 {
 	// The main reason for employing `unsafe` here is *shared mutability*:
 	// due to the granularity of the locks we need, (i.e., a moving critical
@@ -228,7 +205,7 @@ impl<T, Tx> SharedStore<T, Tx>
 	// Note that only our code can use this, so that we can ensure correctness
 	// and concurrent safety.
 	#[allow(clippy::mut_from_ref)]
-	fn get_mut_ref(&self) -> &mut RawStore<T, Tx> {
+	pub(crate) fn get_mut_ref(&self) -> &mut RawStore<T, Tx> {
 		unsafe { &mut *self.raw.get() }
 	}
 
@@ -300,16 +277,16 @@ impl FinaliseState {
 
 // Shared basis for the below cache-based seekables.
 #[derive(Debug)]
-struct RawStore<T, Tx>
-	where T: AsyncRead,
-		Tx: AsyncTransform<T>,
+pub(crate) struct RawStore<T, Tx>
+	where T: Read,
+		Tx: Transform<T>,
 {
 	config: Config,
 
 	len: AtomicUsize,
 	finalised: AtomicU8,
 
-	transform: Tx,
+	pub(crate) transform: Tx,
 
 	source: Option<T>,
 
@@ -320,17 +297,19 @@ struct RawStore<T, Tx>
 }
 
 impl<T, Tx> RawStore<T, Tx>
-	where T: AsyncRead,
-		Tx: AsyncTransform<T>,
+	where T: Read,
+		Tx: Transform<T>,
 {
 	fn new(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
 		let config = config.unwrap_or_else(Default::default);
-
-		// FIXME: apply to all transforms
 		let min_bytes = transform.min_bytes_required();
 
 		if config.chunk_size < min_bytes {
 			return Err(CatcherError::ChunkSize)
+		};
+
+		if !config.spawn_finaliser.is_sync() {
+			return Err(CatcherError::IllegalFinaliser)
 		};
 
 		let mut start_size = if let Some(length) = config.length_hint {
@@ -383,7 +362,7 @@ impl<T, Tx> RawStore<T, Tx>
 		).into();
 		
 		if state_on_call.is_source_live() {
-			if self.config.spawn_finaliser {
+			if self.config.spawn_finaliser.run_elsewhere() {
 				true
 			} else {
 				self.do_finalise();
@@ -612,7 +591,6 @@ impl<T, Tx> RawStore<T, Tx>
 	// * modifying len
 	// * modifying encoder state
 	fn fill_from_source(&mut self, mut bytes_needed: usize) -> IoResult<(usize, bool)> {
-		// FIXME: use transform
 		let minimum_to_write = self.transform.min_bytes_required();
 
 		let overspill = bytes_needed % self.config.read_burst_len;
@@ -738,8 +716,8 @@ impl<T, Tx> RawStore<T, Tx>
 }
 
 impl<T, Tx> Drop for RawStore<T, Tx>
-	where T: AsyncRead,
-		Tx: AsyncTransform<T>,
+	where T: Read,
+		Tx: Transform<T>,
 {
 	fn drop(&mut self) {
 		// This is necesary to prevent unsoundness.
@@ -754,39 +732,14 @@ impl<T, Tx> Drop for RawStore<T, Tx>
 // We need to declare these as thread-safe, since we don't have a mutex around
 // several raw fields. However, the way that they are used should remain
 // consistent.
-unsafe impl<T,Tx> Sync for SharedStore<T,Tx> where T: AsyncRead, Tx: AsyncTransform<T> {}
-unsafe impl<T,Tx> Send for SharedStore<T,Tx> where T: AsyncRead, Tx: AsyncTransform<T> {}
-
-#[derive(Debug)]
-struct BufferChunk {
-	data: Vec<u8>,
-
-	start_pos: usize,
-	end_pos: usize,
-}
-
-impl BufferChunk {
-	fn new(start_pos: usize, chunk_len: usize) -> Self {
-		BufferChunk {
-			data: Vec::with_capacity(chunk_len),
-
-			start_pos,
-			end_pos: start_pos,
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq,)]
-enum CacheReadLocation {
-	Roped,
-	Backed,
-}
+unsafe impl<T,Tx> Sync for SharedStore<T,Tx> where T: Read, Tx: Transform<T> {}
+unsafe impl<T,Tx> Send for SharedStore<T,Tx> where T: Read, Tx: Transform<T> {}
 
 pub trait ReadExt {
     fn skip(&mut self, amt: usize) -> usize where Self: Sized;
 }
 
-impl<R: AsyncRead + Sized> ReadExt for R {
+impl<R: Read + Sized> ReadExt for R {
     fn skip(&mut self, amt: usize) -> usize {
         io::copy(&mut self.by_ref().take(amt as u64), &mut io::sink()).unwrap_or(0) as usize
     }
@@ -794,8 +747,28 @@ impl<R: AsyncRead + Sized> ReadExt for R {
 
 #[cfg(test)]
 mod tests {
+	use crate::*;
+
+	#[cfg(all(feature = "async", feature = "smol-compat", feature = "tokio-compat", feature = "async-std-compat"))]
 	#[test]
-	fn it_works() {
-		assert_eq!(2 + 2, 4);
+	fn only_sync_finalisers() {
+		const INPUT: [u8; 1] = [0];
+
+		use Finaliser::*;
+		let mut illegals = vec![
+			Finaliser::AsyncStd,
+			Finaliser::Tokio,
+			Finaliser::Smol,
+		];
+
+		for fin in illegals.drain(0..) {
+			let mut cfg = Config::new();
+				
+			cfg.spawn_finaliser(fin);
+
+			let catcher = Catcher::new(&INPUT[..], Some(cfg));
+
+			assert!(matches!(catcher, Err(CatcherError::IllegalFinaliser)));
+		}
 	}
 }

@@ -32,7 +32,7 @@ fn transform_plus_one() {
 		}
 	}
 
-	let catcher: TxCatcher<_, PlusOne> = TxCatcher::new(&INPUT[..], None);
+	let catcher: TxCatcher<_, PlusOne> = TxCatcher::new(&INPUT[..], None).unwrap();
 
 	let out = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
 
@@ -78,7 +78,7 @@ fn transform_fold() {
 		}
 	}
 
-	let catcher: TxCatcher<_, FoldAdd> = TxCatcher::new(&INPUT[..], None);
+	let catcher: TxCatcher<_, FoldAdd> = TxCatcher::new(&INPUT[..], None).unwrap();
 
 	let out = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
 
@@ -121,7 +121,7 @@ fn counting_state() {
 		}
 	}
 
-	let catcher: TxCatcher<_, CountOnes> = TxCatcher::new(&INPUT[..], None);
+	let catcher: TxCatcher<_, CountOnes> = TxCatcher::new(&INPUT[..], None).unwrap();
 	let state_catcher = catcher.new_handle();
 
 	let out = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();

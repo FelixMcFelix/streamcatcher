@@ -13,17 +13,39 @@ documentation = "https://docs.rs/streamcatcher"
 edition = "2018"
 
 [features]
-default = []
-async = ["futures"]
+default = ["standard"]
+standard = ["parking_lot"]
+async = ["async-trait", "futures"]
+async-std-compat = ["async", "async-std"]
+smol-compat = ["async", "smol"]
 tokio-compat = ["async", "tokio"]
 
-[dependencies]
-parking_lot = "0.11"
+[dependencies.parking_lot]
+version = "0.11"
+optional = true
+
+[dependencies.async-std]
+optional = true
+version = "1"
+
+[dependencies.async-trait]
+optional = true
+version = "0.1"
 
 [dependencies.futures]
 optional = true
 version = "0.3"
 
+[dependencies.smol]
+optional = true
+version = "0.3"
+
 [dependencies.tokio]
+features = ["rt-core"]
 optional = true
 version = "0.2"
+
+[dev-dependencies]
+futures = "0.3"
+smol = "0.3"
+tokio = "0.2"
