@@ -1,5 +1,4 @@
 //! Top-of-line description.
-
 use crate::*;
 use parking_lot::{
 	lock_api::MutexGuard,
@@ -227,50 +226,6 @@ impl<T, Tx> SharedStore<T, Tx>
 	fn do_finalise(&self) {
 		self.get_mut_ref()
 			.do_finalise()
-	}
-}
-
-#[derive(Clone, Copy, Debug)]
-enum FinaliseState {
-	Live,
-	Finalising,
-	Finalised,
-}
-
-impl From<u8> for FinaliseState {
-	fn from(val: u8) -> Self {
-		use FinaliseState::*;
-		match val {
-			0 => Live,
-			1 => Finalising,
-			2 => Finalised,
-			_ => unreachable!(),
-		}
-	}
-}
-
-impl From<FinaliseState> for u8 {
-	fn from(val: FinaliseState) -> Self {
-		use FinaliseState::*;
-		match val {
-			Live => 0,
-			Finalising => 1,
-			Finalised => 2,
-		}
-	}
-}
-
-impl FinaliseState {
-	fn is_source_live(self) -> bool {
-		matches!(self, FinaliseState::Live)
-	}
-
-	fn is_source_finished(self) -> bool {
-		!self.is_source_live()
-	}
-
-	fn is_backing_ready(self) -> bool {
-		matches!(self, FinaliseState::Finalised)
 	}
 }
 
@@ -734,11 +689,11 @@ impl<T, Tx> Drop for RawStore<T, Tx>
 unsafe impl<T,Tx> Sync for SharedStore<T,Tx> where T: Read, Tx: Transform<T> {}
 unsafe impl<T,Tx> Send for SharedStore<T,Tx> where T: Read, Tx: Transform<T> {}
 
-pub trait ReadExt {
+pub trait ReadSkipExt {
     fn skip(&mut self, amt: usize) -> usize where Self: Sized;
 }
 
-impl<R: Read + Sized> ReadExt for R {
+impl<R: Read + Sized> ReadSkipExt for R {
     fn skip(&mut self, amt: usize) -> usize {
         io::copy(&mut self.by_ref().take(amt as u64), &mut io::sink()).unwrap_or(0) as usize
     }

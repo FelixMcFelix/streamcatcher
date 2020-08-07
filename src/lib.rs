@@ -157,3 +157,47 @@ enum CacheReadLocation {
 	Roped,
 	Backed,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FinaliseState {
+	Live,
+	Finalising,
+	Finalised,
+}
+
+impl From<u8> for FinaliseState {
+	fn from(val: u8) -> Self {
+		use FinaliseState::*;
+		match val {
+			0 => Live,
+			1 => Finalising,
+			2 => Finalised,
+			_ => unreachable!(),
+		}
+	}
+}
+
+impl From<FinaliseState> for u8 {
+	fn from(val: FinaliseState) -> Self {
+		use FinaliseState::*;
+		match val {
+			Live => 0,
+			Finalising => 1,
+			Finalised => 2,
+		}
+	}
+}
+
+impl FinaliseState {
+	fn is_source_live(self) -> bool {
+		matches!(self, FinaliseState::Live)
+	}
+
+	fn is_source_finished(self) -> bool {
+		!self.is_source_live()
+	}
+
+	fn is_backing_ready(self) -> bool {
+		matches!(self, FinaliseState::Finalised)
+	}
+}

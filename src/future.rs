@@ -1,13 +1,6 @@
 //! Top-of-line description.
 use async_trait::async_trait;
-use crate::{
-	CatcherError,
-	Config,
-	Finaliser,
-	Identity,
-	Result,
-	TransformPosition,
-};
+use crate::*;
 use core::{
 	future::Future,
 	pin::Pin,
@@ -243,22 +236,7 @@ impl<T, Tx> TokioRead for TxCatcher<T, Tx>
 	    cx: &mut Context,
 	    buf: &mut [u8],
 	) -> Poll<IoResult<usize>> {
-		println!("Polling outer");
-		self.core.read_from_pos(self.pos, cx, buf)
-			.map(|(bytes_read, should_finalise_here)| {
-				println!("Mapping outer");
-
-				if should_finalise_here {
-					let handle = self.core.clone();
-					// tokio::spawn(move || handle.do_finalise());
-				}
-
-				if let Ok(size) = bytes_read {
-					self.pos += size;
-				}
-
-				bytes_read
-			})
+		AsyncRead::poll_read(self, cx, buf)
 	}
 }
 
@@ -291,9 +269,6 @@ impl<T, Tx> AsyncSeek for TxCatcher<T, Tx>
 				let len = self.core.len() as u64;
 				let new_pos = len.wrapping_add(adj as u64);
 				(adj >= 0 || (adj.abs() as u64) <= len, new_pos)
-
-				// Pin errors... Damn.
-				// unimplemented!()
 			}
 			SeekFrom::Start(new_pos) => {
 				(true, new_pos)
@@ -314,6 +289,20 @@ impl<T, Tx> AsyncSeek for TxCatcher<T, Tx>
 		})
 	}
 }
+
+// #[cfg(feature = "tokio-compat")]
+// impl<T, Tx> TokioSeek for TxCatcher<T, Tx>
+// 	where T: AsyncRead + Unpin + 'static,
+// 		Tx: AsyncTransform<T> + Unpin + 'static,
+// {
+// 	fn poll_seek(
+// 	    mut self: Pin<&mut Self>,
+// 	    cx: &mut Context,
+// 	    pos: SeekFrom,
+// 	) -> Poll<IoResult<usize>> {
+// 		AsyncSeek::poll_seek(self, cx, buf)
+// 	}
+// }
 
 #[derive(Debug)]
 pub(crate) struct SharedStore<T, Tx>
@@ -365,50 +354,6 @@ impl<T, Tx> SharedStore<T, Tx>
 	fn do_finalise(&self) {
 		self.get_mut_ref()
 			.do_finalise()
-	}
-}
-
-#[derive(Clone, Copy, Debug)]
-enum FinaliseState {
-	Live,
-	Finalising,
-	Finalised,
-}
-
-impl From<u8> for FinaliseState {
-	fn from(val: u8) -> Self {
-		use FinaliseState::*;
-		match val {
-			0 => Live,
-			1 => Finalising,
-			2 => Finalised,
-			_ => unreachable!(),
-		}
-	}
-}
-
-impl From<FinaliseState> for u8 {
-	fn from(val: FinaliseState) -> Self {
-		use FinaliseState::*;
-		match val {
-			Live => 0,
-			Finalising => 1,
-			Finalised => 2,
-		}
-	}
-}
-
-impl FinaliseState {
-	fn is_source_live(self) -> bool {
-		matches!(self, FinaliseState::Live)
-	}
-
-	fn is_source_finished(self) -> bool {
-		!self.is_source_live()
-	}
-
-	fn is_backing_ready(self) -> bool {
-		matches!(self, FinaliseState::Finalised)
 	}
 }
 
@@ -906,31 +851,6 @@ impl<T, Tx> Drop for RawStore<T, Tx>
 // consistent.
 unsafe impl<T,Tx> Sync for SharedStore<T,Tx> where T: AsyncRead + Unpin, Tx: AsyncTransform<T> + Unpin {}
 unsafe impl<T,Tx> Send for SharedStore<T,Tx> where T: AsyncRead + Unpin, Tx: AsyncTransform<T> + Unpin {}
-
-#[derive(Debug)]
-struct BufferChunk {
-	data: Vec<u8>,
-
-	start_pos: usize,
-	end_pos: usize,
-}
-
-impl BufferChunk {
-	fn new(start_pos: usize, chunk_len: usize) -> Self {
-		BufferChunk {
-			data: Vec::with_capacity(chunk_len),
-
-			start_pos,
-			end_pos: start_pos,
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq,)]
-enum CacheReadLocation {
-	Roped,
-	Backed,
-}
 
 #[async_trait]
 pub trait AsyncReadSkipExt {

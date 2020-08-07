@@ -1,12 +1,12 @@
 [package]
 name = "streamcatcher"
 version = "0.1.0"
-license = "MIT"
+license = "MIT/Apache-2.0"
 homepage = "https://github.com/FelixMcFelix/streamcatcher"
 repository = "https://github.com/FelixMcFelix/streamcatcher.git"
 authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
-keywords = []
-categories = []
+keywords = ["async", "io", "bytes", "concurrent"]
+categories = ["asynchronous", "caching", "concurrency"]
 description = ""
 readme = "README.md"
 documentation = "https://docs.rs/streamcatcher"
@@ -46,6 +46,7 @@ optional = true
 version = "0.2"
 
 [dev-dependencies]
+async-std = "1"
 futures = "0.3"
 smol = "0.3"
-tokio = "0.2"
+tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
