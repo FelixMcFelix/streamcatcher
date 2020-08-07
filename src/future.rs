@@ -128,10 +128,57 @@ impl<T, Tx> TxCatcher<T, Tx>
 {
 	/// Read all bytes from the underlying stream
 	/// into the backing store in the current task.
-	pub async fn load_all(mut self) {
-		let pos = self.pos;
-		while self.skip(1920 * mem::size_of::<f32>()).await > 0 && !self.is_finalised() {}
-		self.pos = pos;
+	pub fn load_all(mut self) -> LoadAll<T, Tx> {
+		LoadAll::new(self)
+	}
+}
+
+pub struct LoadAll<T, Tx>
+	where T: AsyncRead + Unpin + 'static,
+		Tx: AsyncTransform<T> + Unpin + 'static,
+{
+	catcher: TxCatcher<T, Tx>,
+	in_pos: usize,
+}
+
+impl<T, Tx> LoadAll<T, Tx>
+	where T: AsyncRead + Unpin + 'static,
+		Tx: AsyncTransform<T> + Unpin + 'static,
+{
+	fn new(catcher: TxCatcher<T, Tx>) -> Self {
+		let in_pos = catcher.pos;
+
+		Self {
+			catcher,
+			in_pos,
+		}
+	}
+}
+
+impl<T, Tx> Future for LoadAll<T, Tx>
+	where T: AsyncRead + Unpin + 'static,
+		Tx: AsyncTransform<T> + Unpin + 'static,
+{
+	type Output = TxCatcher<T, Tx>;
+
+	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+		loop {
+			if self.catcher.is_finalised() {
+				break;
+			}
+
+			let mut skip_attempt = self.catcher.skip(7680);
+
+			match Future::poll(Pin::new(&mut skip_attempt), cx) {
+				Poll::Ready(0) => { break },
+				Poll::Ready(n) => {},
+				Poll::Pending => { return Poll::Pending; }
+			}
+		}
+
+		self.catcher.pos = self.in_pos;
+
+		Poll::Ready(self.catcher.new_handle())
 	}
 }
 
@@ -236,17 +283,17 @@ impl<T, Tx> AsyncSeek for TxCatcher<T, Tx>
 				// Slower to load in the whole stream first, but safer.
 				// We could, in theory, use metadata as the basis,
 				// but incorrect metadata would be tricky to work around.
-				// let end_read_future = self.new_handle().load_all();
-				// if let Poll::Pending = Future::poll(&mut end_read_future, cx) {
-				// 	return Poll::Pending;
-				// }
+				let mut end_read_future = self.new_handle().load_all();
+				if let Poll::Pending = Future::poll(Pin::new(&mut end_read_future), cx) {
+					return Poll::Pending;
+				}
 
-				// let len = self.core.len() as u64;
-				// let new_pos = len.wrapping_add(adj as u64);
-				// (adj >= 0 || (adj.abs() as u64) <= len, new_pos)
+				let len = self.core.len() as u64;
+				let new_pos = len.wrapping_add(adj as u64);
+				(adj >= 0 || (adj.abs() as u64) <= len, new_pos)
 
 				// Pin errors... Damn.
-				unimplemented!()
+				// unimplemented!()
 			}
 			SeekFrom::Start(new_pos) => {
 				(true, new_pos)

@@ -8,7 +8,6 @@ use parking_lot::{
 use std::{
 	cell::UnsafeCell,
 	collections::LinkedList,
-	error::Error,
 	io::{
 		self,
 		Error as IoError,

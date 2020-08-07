@@ -1,5 +1,5 @@
 #[cfg(feature = "smol-compat")]
-mod async_std {
+mod smol {
 	use futures::io::{
 		AsyncRead,
 		AsyncReadExt,
