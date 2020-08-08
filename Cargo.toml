@@ -46,7 +46,7 @@ optional = true
 version = "0.2"
 
 [dev-dependencies]
-async-std = "1"
+async-std = { version = "1", features = ["attributes"] }
 futures = "0.3"
 smol = "0.3"
 tokio = { version = "0.2", features = ["rt-threaded", "macros"] }

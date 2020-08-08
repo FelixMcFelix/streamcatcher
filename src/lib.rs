@@ -11,8 +11,6 @@ pub use standard::*;
 pub use state::Stateful;
 
 use core::result::Result as CoreResult;
-#[cfg(feature = "async")]
-use futures::task::Spawn;
 use std::error::Error;
 
 pub type Result<T> = CoreResult<T, CatcherError>;

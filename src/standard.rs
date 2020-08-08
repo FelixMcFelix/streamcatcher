@@ -88,6 +88,14 @@ where
 	pub fn is_finalised(&self) -> bool {
 		self.core.is_finalised()
 	}
+
+	pub fn len(&self) -> usize {
+		self.core.len()
+	}
+
+	pub fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
@@ -149,13 +157,16 @@ where
 				(adj >= 0 || (adj.abs() as u64) <= old_pos, new_pos)
 			},
 			SeekFrom::End(adj) => {
+				// Reduce amount of skip calls in big load...
+				self.pos = self.len();
+
 				// Slower to load in the whole stream first, but safer.
 				// We could, in theory, use metadata as the basis,
 				// but none of our code takes this path, and incorrect
 				// metadata would be tricky to work around.
 				self.load_all();
 
-				let len = self.core.len() as u64;
+				let len = self.len() as u64;
 				let new_pos = len.wrapping_add(adj as u64);
 				(adj >= 0 || (adj.abs() as u64) <= len, new_pos)
 			},
@@ -164,10 +175,11 @@ where
 
 		if valid {
 			if new_pos > old_pos {
-				self.skip((new_pos - old_pos) as usize);
+				self.pos = (new_pos as usize).min(self.len());
+				self.skip(new_pos as usize - self.pos);
 			}
 
-			let len = self.core.len() as u64;
+			let len = self.len() as u64;
 
 			self.pos = new_pos.min(len) as usize;
 			Ok(self.pos as u64)

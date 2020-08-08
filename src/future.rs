@@ -4,18 +4,16 @@ use async_trait::async_trait;
 use core::{
 	future::Future,
 	pin::Pin,
-	result::Result as CoreResult,
 	task::{Context, Poll},
 };
 use futures::{
 	io::{self, AsyncRead, AsyncReadExt, AsyncSeek},
-	lock::{Mutex, MutexGuard},
+	lock::Mutex,
 };
 use std::{
 	cell::UnsafeCell,
 	collections::LinkedList,
-	error::Error,
-	io::{Error as IoError, ErrorKind as IoErrorKind, Read, Result as IoResult, Seek, SeekFrom},
+	io::{Error as IoError, ErrorKind as IoErrorKind, Result as IoResult, SeekFrom},
 	marker::Unpin,
 	mem::{self, ManuallyDrop},
 	sync::{
@@ -105,6 +103,14 @@ where
 	pub fn is_finalised(&self) -> bool {
 		self.core.is_finalised()
 	}
+
+	pub fn len(&self) -> usize {
+		self.core.len()
+	}
+
+	pub fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
@@ -114,7 +120,7 @@ where
 {
 	/// Read all bytes from the underlying stream
 	/// into the backing store in the current task.
-	pub fn load_all(mut self) -> LoadAll<T, Tx> {
+	pub fn load_all(self) -> LoadAll<T, Tx> {
 		LoadAll::new(self)
 	}
 }
@@ -148,6 +154,8 @@ where
 	type Output = TxCatcher<T, Tx>;
 
 	fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+		self.catcher.pos = self.catcher.len();
+
 		loop {
 			if self.catcher.is_finalised() {
 				break;
@@ -157,7 +165,7 @@ where
 
 			match Future::poll(Pin::new(&mut skip_attempt), cx) {
 				Poll::Ready(0) => break,
-				Poll::Ready(n) => {},
+				Poll::Ready(_n) => {},
 				Poll::Pending => {
 					return Poll::Pending;
 				},
@@ -230,11 +238,7 @@ where
 	T: AsyncRead + Unpin + 'static,
 	Tx: AsyncTransform<T> + Unpin + 'static,
 {
-	fn poll_read(
-		mut self: Pin<&mut Self>,
-		cx: &mut Context,
-		buf: &mut [u8],
-	) -> Poll<IoResult<usize>> {
+	fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8]) -> Poll<IoResult<usize>> {
 		AsyncRead::poll_read(self, cx, buf)
 	}
 }
@@ -262,7 +266,7 @@ where
 					return Poll::Pending;
 				}
 
-				let len = self.core.len() as u64;
+				let len = self.len() as u64;
 				let new_pos = len.wrapping_add(adj as u64);
 				(adj >= 0 || (adj.abs() as u64) <= len, new_pos)
 			},
@@ -271,10 +275,11 @@ where
 
 		Poll::Ready(if valid {
 			if new_pos > old_pos {
-				self.skip((new_pos - old_pos) as usize);
+				self.pos = (new_pos as usize).min(self.len());
+				self.skip(new_pos as usize - self.pos);
 			}
 
-			let len = self.core.len() as u64;
+			let len = self.len() as u64;
 
 			self.pos = new_pos.min(len) as usize;
 			Ok(self.pos as u64)
@@ -912,13 +917,5 @@ impl<R: AsyncRead + Sized + Unpin + Send> AsyncReadSkipExt for R {
 		io::copy(&mut self.take(amt as u64), &mut io::sink())
 			.await
 			.unwrap_or(0) as usize
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	#[test]
-	fn it_works() {
-		assert_eq!(2 + 2, 4);
 	}
 }
