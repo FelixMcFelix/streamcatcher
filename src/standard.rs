@@ -89,6 +89,10 @@ where
 		self.core.is_finalised()
 	}
 
+	pub fn pos(&self) -> usize {
+		self.pos
+	}
+
 	pub fn len(&self) -> usize {
 		self.core.len()
 	}

@@ -104,6 +104,10 @@ where
 		self.core.is_finalised()
 	}
 
+	pub fn pos(&self) -> usize {
+		self.pos
+	}
+
 	pub fn len(&self) -> usize {
 		self.core.len()
 	}
@@ -188,12 +192,9 @@ where
 		cx: &mut Context,
 		buf: &mut [u8],
 	) -> Poll<IoResult<usize>> {
-		println!("Polling outer");
 		self.core
 			.read_from_pos(self.pos, cx, buf)
 			.map(|(bytes_read, should_finalise_here)| {
-				println!("Mapping outer");
-
 				if should_finalise_here {
 					let handle = self.core.clone();
 					match self.core.finaliser() {
@@ -276,7 +277,12 @@ where
 		Poll::Ready(if valid {
 			if new_pos > old_pos {
 				self.pos = (new_pos as usize).min(self.len());
-				self.skip(new_pos as usize - self.pos);
+				if new_pos != self.pos as u64 {
+					let mut skip_future = self.skip(new_pos as usize - self.pos);
+					if let Poll::Pending = Future::poll(Pin::new(&mut skip_future), cx) {
+						return Poll::Pending;
+					}
+				}
 			}
 
 			let len = self.len() as u64;
@@ -601,8 +607,6 @@ where
 		// then backing_len *must* be the true length.
 		let (loc, mut finalised) = self.get_location();
 
-		println!("loc {:?} done {:?}", loc, finalised);
-
 		let mut backing_len = self.len();
 
 		let mut should_finalise_external = false;
@@ -613,6 +617,7 @@ where
 
 		let out = if finalised.is_source_finished() || target_len <= backing_len {
 			// If finalised, there is zero risk of triggering more writes.
+			progress_before_pending = true;
 			let read_amt = buf.len().min(backing_len - pos);
 			Ok(self.read_from_local(pos, loc, buf, read_amt))
 		} else {
@@ -627,7 +632,6 @@ where
 				if remaining_in_store == 0 {
 					// Need to do this to trigger the lock
 					// while holding mutability to the other members.
-					println!("Trying lock");
 					let lock: *mut Mutex<()> = &mut self.lock;
 					let mut guard = unsafe {
 						let lock = &*lock;
@@ -637,8 +641,6 @@ where
 					if let Poll::Pending = Future::poll(Pin::new(&mut guard), cx) {
 						break;
 					}
-
-					println!("Lock!");
 
 					finalised = self.finalised();
 					backing_len = self.len();
@@ -691,11 +693,6 @@ where
 			self.remove_rope_ref(finalised);
 		}
 
-		println!(
-			"end pbp {:?} out {:?} should:fin {:?}",
-			progress_before_pending, out, should_finalise_external
-		);
-
 		if progress_before_pending {
 			Poll::Ready((out, should_finalise_external))
 		} else {
@@ -714,8 +711,6 @@ where
 		cx: &mut Context,
 		mut bytes_needed: usize,
 	) -> Poll<IoResult<(usize, bool)>> {
-		println!("From source");
-
 		let minimum_to_write = self.transform.min_bytes_required();
 
 		let overspill = bytes_needed % self.config.read_burst_len;
@@ -765,8 +760,6 @@ where
 				) {
 					progress_before_pending = true;
 
-					println!("Transform gave goods {:?}.", pos);
-
 					match pos {
 						Ok(TransformPosition::Read(len)) => {
 							rope_el.end_pos += len;
@@ -787,7 +780,6 @@ where
 					}
 				} else {
 					// Pending
-					println!("Transform gave pending.");
 					break;
 				}
 

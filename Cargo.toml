@@ -20,6 +20,7 @@ async-std-compat = ["async", "async-std"]
 smol-compat = ["async", "smol"]
 tokio-compat = ["async", "tokio"]
 
+# Dependencies
 [dependencies.parking_lot]
 version = "0.11"
 optional = true
@@ -45,8 +46,22 @@ features = ["rt-core"]
 optional = true
 version = "0.2"
 
+# Testing.
 [dev-dependencies]
 async-std = { version = "1", features = ["attributes"] }
+criterion = "0.3"
 futures = "0.3"
 smol = "0.3"
 tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
+
+[[test]]
+name = "async"
+required-features = ["async-std-compat", "smol-compat", "tokio-compat"]
+
+[[bench]]
+name = "example"
+harness = false
+
+# Misc.
+[package.metadata.docs.rs]
+all-features = true
