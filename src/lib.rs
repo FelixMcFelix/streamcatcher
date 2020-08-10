@@ -1,4 +1,76 @@
-//! Top-of-line description.
+//! Thread-safe, shared (asynchronous) stream buffer designed to lock only on accessing and storing new data.
+//!
+//! Streamcatcher is designed to allow seeking on otherwise one-way streams (*e.g.*, command output)
+//! whose output needs to be accessed by many threads without constant reallocations,
+//! contention over safe read-only data, or unnecessary stalling. Only threads who read in
+//! *new data* ever need to lock the data structure, and do not prevent earlier reads from occurring.
+//!
+//! # Features
+//! 
+//! * Lockless access to pre-read data and finished streams.
+//! * Piecewise allocation to reduce copying and support unknown input lengths.
+//! * Optional acceleration of reads on complete
+//! * (Stateful) bytestream transformations.
+//!
+//! The main algorithm is outlined in [this blog post], with rope
+//! reference tracking moved to occur only in the core.
+//!
+//! # Example
+//! ```
+//! use streamcatcher::Catcher;
+//! use std::io::{
+//!     self,
+//!     Read,
+//!     Seek,
+//!     SeekFrom,
+//! };
+//!
+//! const THREAD_COUNT: usize = 256;
+//! const PROCESS_LEN: u64 = 10_000_000;
+//!
+//! // A read-only process, which many threads need to (re-)use.
+//! let mut process = io::repeat(0xAC)
+//!     .take(PROCESS_LEN);
+//!
+//! let mut catcher = Catcher::new(process, None)
+//!     .expect("Default config can't fail.");
+//!
+//! // Many workers who need this data...
+//! let mut handles = (0..THREAD_COUNT)
+//!     .map(|v| {
+//!         let mut handle = catcher.new_handle();
+//!         std::thread::spawn(move || {
+//!             let mut buf = [0u8; 4_096];
+//!             let mut correct_bytes = 0;
+//!             while let Ok(count) = handle.read(&mut buf[..]) {
+//!                 if count == 0 { break }
+//!                 for &byte in buf[..count].iter() {
+//!                     if byte == 0xAC { correct_bytes += 1 }
+//!                 }
+//!             }
+//!             correct_bytes
+//!         })
+//!     })
+//!     .collect::<Vec<_>>();
+//!
+//! // And everything read out just fine!
+//! let count_correct = handles.drain(..)
+//!     .map(|h| h.join().unwrap())
+//!     .filter(|&v| v == PROCESS_LEN)
+//!     .count();
+//!
+//! assert_eq!(count_correct, THREAD_COUNT);
+//!
+//! // Moving forwards and backwards *just works*.
+//! catcher.seek(SeekFrom::End(0));
+//! assert_eq!(io::copy(&mut catcher, &mut io::sink()).unwrap(), 0);
+//!
+//! catcher.seek(SeekFrom::Current(-256));
+//! assert_eq!(io::copy(&mut catcher, &mut io::sink()).unwrap(), 256);
+//! 
+//! ```
+//!
+//! [this blog post]: https://mcfelix.me/blog/shared-buffers/
 
 #[cfg(feature = "async")]
 pub mod future;
@@ -16,14 +88,37 @@ use std::error::Error;
 pub type Result<T> = CoreResult<T, CatcherError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// The number of bytes output by a [`Transform`] into a [`TxCatcher`].
+///
+/// [`Transform`]: trait.Transform.html
+/// [`TxCatcher`]: struct.TxCatcher.html
 pub enum TransformPosition {
+	/// Indication that a stream has not yet finished.
+	///
+	/// This has different semantics from `Read::read`. Ordinarily, `Ok(0)` denotes the end-of-file,
+	/// but some transforms (*e.g.*, audio compression) need to read in enough bytes before
+	/// they can output any further data, and might return `Read(0)`.
 	Read(usize),
+
+	/// Indication that a stream has definitely finished.
 	Finished,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Streamcatcher configuration errors.
 pub enum CatcherError {
+	/// Returned when the chunk size is smaller than a [`Transform`]'s
+	/// [`minimum required contiguous byte count`].
+	///
+	/// [`Transform`]: trait.Transform.html
+	/// [`minimum required contiguous byte count`]: trait.Transform.html#method.min_bytes_required
 	ChunkSize,
+
+	/// Returned when an async-only [`Finaliser`] is passed into a synchronous
+	/// [`TxCatcher`].
+	///
+	/// [`Finaliser`]: enum.Finaliser.html
+	/// [`TxCatcher`]: struct.TxCatcher.html
 	IllegalFinaliser,
 }
 
@@ -36,24 +131,47 @@ impl std::fmt::Display for CatcherError {
 impl Error for CatcherError {}
 
 #[derive(Clone, Debug)]
+/// Method to allocate a new contiguous backing store, if required by
+/// [`Config::use_backing`].
+///
+/// Choosing the incorrect async runtime may cause a panic, and any values other than
+/// [`InPlace`] or [`NewThread`] will result in an error in a synchronous [`Catcher`].
+///
+/// [`Config::use_backing`]: struct.Config.html#method.use_backing
+/// [`InPlace`]: #variant.InPlace
+/// [`NewThread`]: #variant.NewThread
+/// [`Catcher`]: type.Catcher.html
 pub enum Finaliser {
+	/// Allocate the new store and copy in all bytes in-place, blocking the current thread.
 	InPlace,
+
+	/// Allocate the new store and copy in all bytes in-place in a new thread.
+	///
+	/// *Default*, safe to call in an async context.
 	NewThread,
 	// #[cfg(feature = "async")]
 	// Async(Box<dyn Spawn>),
+
 	#[cfg(feature = "async-std-compat")]
+	/// Use the async-std runtime for backing-store creation.
 	AsyncStd,
+
 	#[cfg(feature = "tokio-compat")]
+	/// Use the tokio runtime for backing-store creation.
 	Tokio,
+
 	#[cfg(feature = "smol-compat")]
+	/// Use the smol runtime for backing-store creation.
 	Smol,
 }
 
 impl Finaliser {
+	/// Returns whether this option will block a reading thread in a sync-friendly manner.
 	pub fn is_sync(&self) -> bool {
 		matches!(self, Finaliser::InPlace | Finaliser::NewThread)
 	}
 
+	/// Returns whether this option will block a reading thread to finalise.
 	pub fn run_elsewhere(&self) -> bool {
 		!matches!(self, Finaliser::InPlace)
 	}

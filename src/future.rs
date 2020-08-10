@@ -1,4 +1,4 @@
-//! Top-of-line description.
+//! `AsyncRead`/`AsyncWrite` compatible version.
 use crate::*;
 use async_trait::async_trait;
 use core::{
