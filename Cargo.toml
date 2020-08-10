@@ -7,7 +7,7 @@ repository = "https://github.com/FelixMcFelix/streamcatcher.git"
 authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
 keywords = ["async", "io", "bytes", "concurrent"]
 categories = ["asynchronous", "caching", "concurrency"]
-description = ""
+description = "A thread-safe, shared (asynchronous), almost-lockless stream buffer."
 readme = "README.md"
 documentation = "https://docs.rs/streamcatcher"
 edition = "2018"
@@ -57,6 +57,14 @@ tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
 [[test]]
 name = "async"
 required-features = ["async-std-compat", "smol-compat", "tokio-compat"]
+
+[[test]]
+name = "catcher"
+required-features = ["standard"]
+
+[[test]]
+name = "transform"
+required-features = ["standard"]
 
 [[bench]]
 name = "example"

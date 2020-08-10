@@ -26,7 +26,7 @@ fn transform_plus_one() {
 		}
 	}
 
-	let catcher: TxCatcher<_, PlusOne> = TxCatcher::new(&INPUT[..], None).unwrap();
+	let catcher: TxCatcher<_, PlusOne> = TxCatcher::new(&INPUT[..]);
 
 	let out = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
 
@@ -72,7 +72,7 @@ fn transform_fold() {
 		}
 	}
 
-	let catcher: TxCatcher<_, FoldAdd> = TxCatcher::new(&INPUT[..], None).unwrap();
+	let catcher: TxCatcher<_, FoldAdd> = TxCatcher::new(&INPUT[..]);
 
 	let out = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
 
@@ -110,18 +110,16 @@ fn counting_state() {
 
 	impl Stateful for CountOnes {
 		type State = u64;
-		unsafe fn state(&self) -> Self::State {
+		fn state(&self) -> Self::State {
 			self.count.load(Ordering::Acquire)
 		}
 	}
 
-	let catcher: TxCatcher<_, CountOnes> = TxCatcher::new(&INPUT[..], None).unwrap();
+	let catcher: TxCatcher<_, CountOnes> = TxCatcher::new(&INPUT[..]);
 	let state_catcher = catcher.new_handle();
 
 	let out = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
 
 	assert_eq!(out[..], OUTPUT_STREAM[..]);
-	unsafe {
-		assert_eq!(state_catcher.state(), OUTPUT_COUNT);
-	}
+	assert_eq!(state_catcher.get_final_state(), Some(OUTPUT_COUNT));
 }

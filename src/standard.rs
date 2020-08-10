@@ -20,13 +20,25 @@ use std::{
 	},
 };
 
-/// The basics.
+/// A simple shared stream buffer, leaving data unchanged.
 pub type Catcher<T> = TxCatcher<T, Identity>;
 
+/// Allows an input bytestream to be modified before it is stored.
 pub trait Transform<TInput: Read> {
+	/// Data transform, given access to the underlying `Read` object and the destination buffer.
+	///
+	/// Transforms are free to make no change to `buf` without marking the stream as finalised:
+	/// see [TransformPosition] for the semantics.
+	///
+	/// [TransformPosition]: enum.TransformPosition.html
 	fn transform_read(&mut self, src: &mut TInput, buf: &mut [u8]) -> IoResult<TransformPosition>;
 
-	/// Contiguous specifically.
+	/// The minimum amount of contiguous bytes required in any rope segment.
+	///
+	/// Larger choices can simplify serialisation across rope segments (*i.e.*, `2` would
+	/// ensure that a `u16` will never be split across segment boundaries).
+	///
+	/// *Defaults to `1`.*
 	fn min_bytes_required(&self) -> usize {
 		1
 	}
@@ -42,7 +54,7 @@ impl<T: Read> Transform<T> for Identity {
 }
 
 #[derive(Clone, Debug)]
-/// Test desc.
+/// A shared stream buffer, using an applied input data transform.
 pub struct TxCatcher<T, Tx>
 where
 	T: Read,
@@ -57,8 +69,13 @@ where
 	T: Read,
 	Tx: Transform<T> + Default,
 {
-	pub fn new(source: T, config: Option<Config>) -> Result<Self> {
-		Self::new_tx(source, Default::default(), config)
+	pub fn new(source: T) -> Self {
+		Self::with_tx(source, Default::default(), None)
+			.expect("Default config should be guaranteed valid")
+	}
+
+	pub fn with_config(source: T, config: Config) -> Result<Self> {
+		Self::with_tx(source, Default::default(), Some(config))
 	}
 }
 
@@ -67,7 +84,7 @@ where
 	T: Read,
 	Tx: Transform<T>,
 {
-	pub fn new_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
+	pub fn with_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
 		RawStore::new(source, transform, config).map(|c| Self {
 			core: Arc::new(SharedStore {
 				raw: UnsafeCell::new(c),
@@ -76,8 +93,8 @@ where
 		})
 	}
 
-	/// Acquire a new handle to this object, to begin a new
-	/// source from the exsting cached data.
+	/// Acquire a new handle to this object, creating a new
+	/// view of the existing cached data from the beginning.
 	pub fn new_handle(&self) -> Self {
 		Self {
 			core: self.core.clone(),
@@ -85,18 +102,33 @@ where
 		}
 	}
 
+	/// Returns whether the underlying stream has been *finalised*, *i.e.*,
+	/// whether all rope segments have been combined into a single contiguous backing store.
+	///
+	/// According to [Config], this may never become true if finalisation is disabled.
+	///
+	/// [Config]: struct.Config.html
 	pub fn is_finalised(&self) -> bool {
 		self.core.is_finalised()
 	}
 
+	/// Returns whether the underlying stream is *finished*, *i.e.*, all bytes it will
+	/// produce have been stored in some fashiom.
+	pub fn is_finished(&self) -> bool {
+		self.core.is_finished()
+	}
+
+	/// Returns this handle's position.
 	pub fn pos(&self) -> usize {
 		self.pos
 	}
 
+	/// Returns the number of bytes taken and stored from the transformed stream.
 	pub fn len(&self) -> usize {
 		self.core.len()
 	}
 
+	/// Returns whether any bytes have been stored from the transformed source.
 	pub fn is_empty(&self) -> bool {
 		self.len() == 0
 	}
@@ -230,8 +262,12 @@ where
 		self.get_mut_ref().len()
 	}
 
-	fn is_finalised(&self) -> bool {
+	fn is_finished(&self) -> bool {
 		self.get_mut_ref().finalised().is_source_finished()
+	}
+
+	fn is_finalised(&self) -> bool {
+		self.get_mut_ref().finalised().is_backing_ready()
 	}
 
 	fn do_finalise(&self) {
@@ -733,6 +769,7 @@ where
 {
 }
 
+/// Utility trait to scan forward by discarding bytes.
 pub trait ReadSkipExt {
 	fn skip(&mut self, amt: usize) -> usize
 	where
@@ -760,14 +797,14 @@ mod tests {
 		const INPUT: [u8; 1] = [0];
 
 		use Finaliser::*;
-		let mut illegals = vec![Finaliser::AsyncStd, Finaliser::Tokio, Finaliser::Smol];
+		let mut illegals = vec![AsyncStd, Tokio, Smol];
 
 		for fin in illegals.drain(0..) {
 			let mut cfg = Config::new();
 
 			cfg.spawn_finaliser(fin);
 
-			let catcher = Catcher::new(&INPUT[..], Some(cfg));
+			let catcher = Catcher::with_config(&INPUT[..], cfg);
 
 			assert!(matches!(catcher, Err(CatcherError::IllegalFinaliser)));
 		}

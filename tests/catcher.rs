@@ -5,7 +5,7 @@ use streamcatcher::*;
 fn identity() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let catcher = Catcher::new(&INPUT[..]);
 
 	let out = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
 
@@ -16,7 +16,10 @@ fn identity() {
 fn finalises() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let mut catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let mut cfg = Config::new();
+	cfg.spawn_finaliser(Finaliser::InPlace);
+
+	let mut catcher = Catcher::with_config(&INPUT[..], cfg).unwrap();
 
 	catcher.load_all();
 
@@ -27,7 +30,7 @@ fn finalises() {
 fn seek_start() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let mut catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let mut catcher = Catcher::new(&INPUT[..]);
 
 	let _ = catcher
 		.new_handle()
@@ -52,7 +55,7 @@ fn seek_start() {
 fn seek_end() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let mut catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let mut catcher = Catcher::new(&INPUT[..]);
 
 	let _ = catcher
 		.new_handle()
@@ -77,7 +80,7 @@ fn seek_end() {
 fn seek_current() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let mut catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let mut catcher = Catcher::new(&INPUT[..]);
 
 	let _ = catcher
 		.new_handle()
@@ -108,7 +111,7 @@ fn seek_current() {
 fn read_after_complete() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let catcher = Catcher::new(&INPUT[..]);
 	let catcher_clone = catcher.new_handle();
 
 	let out_1 = catcher_clone

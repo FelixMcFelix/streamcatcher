@@ -1,4 +1,6 @@
-//! `AsyncRead`/`AsyncWrite` compatible version.
+//! `AsyncRead`/`AsyncWrite` compatible stream buffers.
+///
+/// Requires the `"async"` feature.
 use crate::*;
 use async_trait::async_trait;
 use core::{
@@ -24,8 +26,14 @@ use std::{
 #[cfg(feature = "tokio-compat")]
 use tokio::io::{AsyncRead as TokioRead, AsyncSeek as TokioSeek};
 
+/// Async variant of [`Catcher`], applying no transformation to the input stream.
+///
+/// [`Catcher`]: ../trait.Catcher.html
 pub type Catcher<T> = TxCatcher<T, Identity>;
 
+/// Async variant of [`Transform`].
+///
+/// [`Transform`]: ../trait.Transform.html
 pub trait AsyncTransform<TInput: AsyncRead> {
 	fn transform_poll_read(
 		&mut self,
@@ -34,7 +42,6 @@ pub trait AsyncTransform<TInput: AsyncRead> {
 		buf: &mut [u8],
 	) -> Poll<IoResult<TransformPosition>>;
 
-	/// Contiguous specifically.
 	fn min_bytes_required(&self) -> usize {
 		1
 	}
@@ -57,7 +64,13 @@ impl<T: AsyncRead> AsyncTransform<T> for Identity {
 }
 
 #[derive(Clone, Debug)]
-/// Test desc.
+/// Async variant of [`TxCatcher`].
+///
+/// See the synchronous version for an explanation of the API,
+/// noting that [`load_all`] is now an asynchronous operation.
+///
+/// [`TxCatcher`]: ../struct.TxCatcher.html
+/// [`load_all`]: #method.load_all
 pub struct TxCatcher<T, Tx>
 where
 	T: AsyncRead + Unpin,
@@ -72,8 +85,13 @@ where
 	T: AsyncRead + Unpin,
 	Tx: AsyncTransform<T> + Unpin + Default,
 {
-	pub fn new(source: T, config: Option<Config>) -> Result<Self> {
-		Self::new_tx(source, Default::default(), config)
+	pub fn new(source: T) -> Self {
+		Self::with_tx(source, Default::default(), None)
+			.expect("Default config should be guaranteed valid")
+	}
+
+	pub fn with_config(source: T, config: Config) -> Result<Self> {
+		Self::with_tx(source, Default::default(), Some(config))
 	}
 }
 
@@ -82,7 +100,7 @@ where
 	T: AsyncRead + Unpin,
 	Tx: AsyncTransform<T> + Unpin,
 {
-	pub fn new_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
+	pub fn with_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
 		RawStore::new(source, transform, config).map(|c| Self {
 			core: Arc::new(SharedStore {
 				raw: UnsafeCell::new(c),
@@ -102,6 +120,10 @@ where
 
 	pub fn is_finalised(&self) -> bool {
 		self.core.is_finalised()
+	}
+
+	pub fn is_finished(&self) -> bool {
+		self.core.is_finished()
 	}
 
 	pub fn pos(&self) -> usize {
@@ -129,6 +151,9 @@ where
 	}
 }
 
+/// Future returned by [`TxCatcher::load_all`].
+///
+/// [`TxCatcher::load_all`]: struct.TxCatcher.html#method.load_all
 pub struct LoadAll<T, Tx>
 where
 	T: AsyncRead + Unpin + 'static,
@@ -356,6 +381,10 @@ where
 	}
 
 	fn is_finalised(&self) -> bool {
+		self.get_mut_ref().finalised().is_backing_ready()
+	}
+
+	fn is_finished(&self) -> bool {
 		self.get_mut_ref().finalised().is_source_finished()
 	}
 
@@ -897,6 +926,9 @@ where
 }
 
 #[async_trait]
+/// Async variant of [`ReadSkipExt`].
+///
+/// [`ReadSkipExt`]: ../trait.ReadSkipExt.html
 pub trait AsyncReadSkipExt {
 	async fn skip(&mut self, amt: usize) -> usize
 	where

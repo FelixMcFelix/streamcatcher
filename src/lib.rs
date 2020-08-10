@@ -8,14 +8,16 @@
 //! # Features
 //! 
 //! * Lockless access to pre-read data and finished streams.
+//! * Transparent caching of newly read data.
+//! * Allows seeking on read-only bytestreams.
 //! * Piecewise allocation to reduce copying and support unknown input lengths.
-//! * Optional acceleration of reads on complete
+//! * Optional acceleration of reads on stream completion by copying to a single backing store.
 //! * (Stateful) bytestream transformations.
 //!
 //! The main algorithm is outlined in [this blog post], with rope
 //! reference tracking moved to occur only in the core.
 //!
-//! # Example
+//! # Examples
 //! ```
 //! use streamcatcher::Catcher;
 //! use std::io::{
@@ -32,8 +34,7 @@
 //! let mut process = io::repeat(0xAC)
 //!     .take(PROCESS_LEN);
 //!
-//! let mut catcher = Catcher::new(process, None)
-//!     .expect("Default config can't fail.");
+//! let mut catcher = Catcher::new(process);
 //!
 //! // Many workers who need this data...
 //! let mut handles = (0..THREAD_COUNT)
@@ -80,11 +81,12 @@ mod state;
 
 #[cfg(feature = "standard")]
 pub use standard::*;
-pub use state::Stateful;
+pub use state::*;
 
 use core::result::Result as CoreResult;
 use std::error::Error;
 
+/// Shorthand for configuration error handling.
 pub type Result<T> = CoreResult<T, CatcherError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,14 +156,20 @@ pub enum Finaliser {
 
 	#[cfg(feature = "async-std-compat")]
 	/// Use the async-std runtime for backing-store creation.
+	///
+	/// Requires the `"async-std-compat"` feature.
 	AsyncStd,
 
 	#[cfg(feature = "tokio-compat")]
 	/// Use the tokio runtime for backing-store creation.
+	///
+	/// Requires the `"tokio-compat"` feature.
 	Tokio,
 
 	#[cfg(feature = "smol-compat")]
 	/// Use the smol runtime for backing-store creation.
+	///
+	/// Requires the `"smol-compat"` feature.
 	Smol,
 }
 
@@ -178,6 +186,7 @@ impl Finaliser {
 }
 
 #[derive(Clone, Debug)]
+/// Options controlling backing store allocation, finalisation, and so on.
 pub struct Config {
 	chunk_size: usize,
 	spawn_finaliser: Finaliser,
@@ -197,22 +206,21 @@ impl Config {
 		}
 	}
 
-	/// The amount of bytes to allocate any time more space is required to
+	/// The amount of bytes to allocate whenever more space is required to
 	/// store the stream.
 	///
-	/// A larger value is generally preferred for minimising locking and allocations
+	/// A larger value is generally preferred for minimising locking and allocations,
 	/// but may reserve too much space before the struct is finalised.
 	///
-	/// If this is smaller than the minimum contiguous bytes needed for a coding type,
-	/// or unspecified, then this will default to an estimated 5 seconds.
+	/// *Defaults to `4096`. Must be larger than the transform's minimum chunk size.*
 	pub fn chunk_size(&mut self, size: usize) -> &mut Self {
 		self.chunk_size = size;
 		self
 	}
 
-	/// Allocate a contiguous backing store to speed up reads after the stream ends.
+	/// Allocate a single contiguous backing store to speed up reads after the stream ends.
 	///
-	/// Defaults to `true`.
+	/// *Defaults to `true`.*
 	pub fn use_backing(&mut self, val: bool) -> &mut Self {
 		self.use_backing = val;
 		self
@@ -223,7 +231,9 @@ impl Config {
 	///
 	/// Disabling this may negatively impact performance of the final read in a stream.
 	///
-	/// Defaults to `true`.
+	/// *Defaults to [`Finaliser::NewThread`].*
+	///
+	/// [`Finaliser::NewThread`]: enum.FInaliser.html#variant.NewThread
 	pub fn spawn_finaliser(&mut self, finaliser: Finaliser) -> &mut Self {
 		self.spawn_finaliser = finaliser;
 		self
@@ -231,9 +241,11 @@ impl Config {
 
 	/// Estimate for the amount of data required to store the completed stream.
 	///
-	/// On `None`, this will default to `chunk_size`.
+	/// On `None`, this will be set to [`chunk_size`].
 	///
-	/// Defaults to `None`.
+	/// *Defaults to `None`.*
+	///
+	/// [`chunk_size`]: #method.chunk_size
 	pub fn length_hint(&mut self, hint: Option<usize>) -> &mut Self {
 		self.length_hint = hint;
 		self
@@ -247,6 +259,7 @@ impl Default for Config {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+/// A no-op data transform.
 pub struct Identity {}
 
 #[derive(Debug)]

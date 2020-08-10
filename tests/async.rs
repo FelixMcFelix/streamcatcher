@@ -7,7 +7,7 @@ use streamcatcher::{future::*, Config, Finaliser, Result};
 async fn identity() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let mut catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let mut catcher = Catcher::new(&INPUT[..]);
 	let mut space = vec![0u8; INPUT.len()];
 	let mut read_in = 0;
 
@@ -18,7 +18,7 @@ async fn identity() {
 		}
 	}
 
-	assert!(catcher.is_finalised());
+	assert!(catcher.is_finished());
 
 	assert_eq!(read_in, INPUT.len());
 	assert_eq!(space[..], INPUT[..]);
@@ -27,10 +27,10 @@ async fn identity() {
 async fn load_all() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let mut catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let catcher = Catcher::new(&INPUT[..]);
 	catcher.new_handle().load_all().await;
 
-	assert!(catcher.is_finalised());
+	assert!(catcher.is_finished());
 
 	assert_eq!(catcher.len(), INPUT.len());
 	assert_eq!(catcher.pos(), 0);
@@ -46,7 +46,7 @@ async fn spawn_finalise(fin: Finaliser) {
 
 	cfg.spawn_finaliser(fin);
 
-	let mut catcher = Catcher::new(Cursor::new(input.clone()), None).unwrap();
+	let mut catcher = Catcher::new(Cursor::new(input.clone()));
 	let mut space = vec![0u8; input.len() + 1];
 	let mut read_in = 0;
 
@@ -57,7 +57,7 @@ async fn spawn_finalise(fin: Finaliser) {
 		}
 	}
 
-	assert!(catcher.is_finalised());
+	assert!(catcher.is_finished());
 
 	assert_eq!(read_in, input.len());
 	assert_eq!(space[..input.len()], input[..]);
@@ -66,7 +66,7 @@ async fn spawn_finalise(fin: Finaliser) {
 async fn seek_start() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let mut catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let mut catcher = Catcher::new(&INPUT[..]);
 	let mut space = vec![0u8; INPUT.len()];
 	let mut read_in = 0;
 
@@ -94,7 +94,7 @@ async fn seek_start() {
 async fn seek_end() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let mut catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let mut catcher = Catcher::new(&INPUT[..]);
 	let mut space = vec![0u8; INPUT.len()];
 	let mut read_in = 0;
 
@@ -122,7 +122,7 @@ async fn seek_end() {
 async fn read_after_complete() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let catcher = Catcher::new(&INPUT[..], None).unwrap();
+	let catcher = Catcher::new(&INPUT[..]);
 	let catcher_clone = catcher.new_handle();
 
 	let mut space1 = vec![0u8; INPUT.len()];
