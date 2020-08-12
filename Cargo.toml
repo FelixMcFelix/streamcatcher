@@ -46,13 +46,18 @@ features = ["rt-core"]
 optional = true
 version = "0.2"
 
+[target.'cfg(loom)'.dependencies]
+loom = { version = "0.3", features = ["checkpoint"] }
+
 # Testing.
 [dev-dependencies]
 async-std = { version = "1", features = ["attributes"] }
 criterion = "0.3"
 futures = "0.3"
+synchronoise = "1"
 smol = "0.3"
 tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
+utils = { path = "utils" }
 
 [[test]]
 name = "async"

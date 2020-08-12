@@ -82,7 +82,7 @@ where
 	type State = <Tx as Stateful>::State;
 
 	fn state(&self) -> Self::State {
-		self.get_mut_ref().state()
+		self.raw.with(|ptr| (unsafe { &*ptr }).state())
 	}
 }
 

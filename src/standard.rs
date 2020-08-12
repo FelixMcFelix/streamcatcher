@@ -1,8 +1,11 @@
 //! Top-of-line description.
-use crate::*;
-use parking_lot::{lock_api::MutexGuard, Mutex};
-use std::{
+use crate::{
+	*,
 	cell::UnsafeCell,
+	sync::{Arc, AtomicU8, AtomicUsize, Ordering, Mutex},
+	thread::JoinHandle,
+};
+use std::{
 	collections::LinkedList,
 	io::{
 		self,
@@ -14,10 +17,6 @@ use std::{
 		SeekFrom,
 	},
 	mem::{self, ManuallyDrop},
-	sync::{
-		atomic::{AtomicU8, AtomicUsize, Ordering},
-		Arc,
-	},
 };
 
 /// A simple shared stream buffer, leaving data unchanged.
@@ -141,9 +140,9 @@ where
 {
 	/// Spawn a new thread to read all bytes from the underlying stream
 	/// into the backing store.
-	pub fn spawn_loader(&self) -> std::thread::JoinHandle<()> {
+	pub fn spawn_loader(&self) -> JoinHandle<()> {
 		let mut handle = self.new_handle();
-		std::thread::spawn(move || {
+		thread::spawn(move || {
 			handle.load_all();
 		})
 	}
@@ -167,7 +166,7 @@ where
 
 		if should_finalise_here {
 			let handle = self.core.clone();
-			std::thread::spawn(move || handle.do_finalise());
+			thread::spawn(move || handle.do_finalise());
 		}
 
 		if let Ok(size) = bytes_read {
@@ -234,7 +233,7 @@ where
 	T: Read,
 	Tx: Transform<T>,
 {
-	raw: UnsafeCell<RawStore<T, Tx>>,
+	pub(crate) raw: UnsafeCell<RawStore<T, Tx>>,
 }
 
 impl<T, Tx> SharedStore<T, Tx>
@@ -249,29 +248,24 @@ where
 	//
 	// Note that only our code can use this, so that we can ensure correctness
 	// and concurrent safety.
-	#[allow(clippy::mut_from_ref)]
-	pub(crate) fn get_mut_ref(&self) -> &mut RawStore<T, Tx> {
-		unsafe { &mut *self.raw.get() }
-	}
-
 	fn read_from_pos(&self, pos: usize, buffer: &mut [u8]) -> (IoResult<usize>, bool) {
-		self.get_mut_ref().read_from_pos(pos, buffer)
+		self.raw.with_mut(|ptr| (unsafe { &mut *ptr }).read_from_pos(pos, buffer))
 	}
 
 	fn len(&self) -> usize {
-		self.get_mut_ref().len()
+		self.raw.with(|ptr| (unsafe { &*ptr }).len())
 	}
 
 	fn is_finished(&self) -> bool {
-		self.get_mut_ref().finalised().is_source_finished()
+		self.raw.with(|ptr| (unsafe { &*ptr }).finalised().is_source_finished())
 	}
 
 	fn is_finalised(&self) -> bool {
-		self.get_mut_ref().finalised().is_backing_ready()
+		self.raw.with(|ptr| (unsafe { &*ptr }).finalised().is_backing_ready())
 	}
 
 	fn do_finalise(&self) {
-		self.get_mut_ref().do_finalise()
+		self.raw.with_mut(|ptr| (unsafe { &mut *ptr }).do_finalise())
 	}
 }
 
@@ -563,7 +557,7 @@ where
 					}
 
 					// Unlocked here.
-					MutexGuard::unlock_fair(guard);
+					mem::drop(guard);
 				}
 
 				if remaining_in_store > 0 {

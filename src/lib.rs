@@ -75,10 +75,12 @@
 
 #[cfg(feature = "async")]
 pub mod future;
+mod loom;
 #[cfg(feature = "standard")]
 mod standard;
 mod state;
 
+pub(crate) use crate::loom::*;
 #[cfg(feature = "standard")]
 pub use standard::*;
 pub use state::*;

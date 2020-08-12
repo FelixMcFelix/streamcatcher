@@ -1,6 +1,5 @@
-//! `AsyncRead`/`AsyncWrite` compatible stream buffers.
-///
-/// Requires the `"async"` feature.
+//! `AsyncRead`/`AsyncSeek` compatible stream buffers.
+//! Requires the `"async"` feature.
 use crate::*;
 use async_trait::async_trait;
 use core::{
