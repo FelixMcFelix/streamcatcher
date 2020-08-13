@@ -2,7 +2,7 @@ name: Build and Test
 
 on:
   push:
-    branches: [ stable ]
+    branches: [ stable, breaking ]
   pull_request:
     branches: [ stable, breaking ]
 

@@ -72,7 +72,7 @@ name = "transform"
 required-features = ["standard"]
 
 [[bench]]
-name = "example"
+name = "vary-threads"
 harness = false
 
 # Misc.
