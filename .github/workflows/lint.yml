@@ -1,0 +1,40 @@
+name: Lint
+
+on:
+  push:
+    branches: [ stable, breaking ]
+  pull_request:
+    branches: [ stable, breaking ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rustfmt:
+    name: Check Formatting
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        components: rustfmt
+        override: true
+    - name: Rustfmt
+      run: cargo +nightly fmt --all -- --check
+  
+  clippy:
+    name: Obeys the Dark Lord Clippy
+    runs-on: ubuntu-latest
+
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        components: clippy
+        override: true
+    - uses: actions-rs/clippy-check@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        args: --all-features
