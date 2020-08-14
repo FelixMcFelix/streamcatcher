@@ -539,11 +539,21 @@ where
 					// Need to do this to trigger the lock
 					// while holding mutability to the other members.
 					let lock: *mut Mutex<()> = &mut self.lock;
+					#[cfg(loom)]
 					let guard = unsafe {
 						let lock = &*lock;
+
+						#[cfg(loom)]
+						lock.lock()
+					};
+					#[cfg(not(loom))]
+					let guard = unsafe {
+						let lock = &*lock;
+
 						lock.try_lock()
 					};
 
+					#[cfg(not(loom))]
 					if guard.is_none() {
 						loop {
 							backoff.spin();
