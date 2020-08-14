@@ -11,6 +11,20 @@ Bugfixes and API-respecting changes (including new functionality which does not 
 Significant rework (or a necessary compiler upgrade) should target `breaking`.
 PRs should avoid bumping the minimum supported rust compiler version where possible, and any changes targeting `stable` **must** compile on the version indicated in [README.md].
 
+### Testing
+
+Tests should still pass in any new PR, and will be automatically run by GitHub:
+
+```sh
+cargo test --all-features
+```
+
+[Loom]-based tests take too long as GitHub actions, and must be manually checked if core atomic/locking logic changes.
+
+```sh
+RUSTFLAGS="--cfg loom --cfg loom_nightly" cargo +nightly test --all-features safety
+```
+
 ### Formatting
 PRs *must* pass through `rustfmt` (as described below) before merging.
 
@@ -37,3 +51,4 @@ At a high level, this enforces:
 Documentation, comments, and function names should adhere to UK English where possible (*i.e.*, "colour" and not "color").
 
 [README.md]: README.md
+[Loom]: https://github.com/tokio-rs/loom

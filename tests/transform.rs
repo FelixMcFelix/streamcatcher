@@ -26,6 +26,8 @@ fn transform_plus_one() {
 		}
 	}
 
+	impl NeedsBytes for PlusOne {}
+
 	let catcher: TxCatcher<_, PlusOne> = TxCatcher::new(&INPUT[..]);
 
 	let out = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
@@ -72,6 +74,8 @@ fn transform_fold() {
 		}
 	}
 
+	impl NeedsBytes for FoldAdd {}
+
 	let catcher: TxCatcher<_, FoldAdd> = TxCatcher::new(&INPUT[..]);
 
 	let out = catcher.bytes().map(|x| x.unwrap()).collect::<Vec<_>>();
@@ -107,6 +111,8 @@ fn counting_state() {
 			})
 		}
 	}
+
+	impl NeedsBytes for CountOnes {}
 
 	impl Stateful for CountOnes {
 		type State = u64;

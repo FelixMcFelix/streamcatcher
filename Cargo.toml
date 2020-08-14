@@ -13,14 +13,17 @@ documentation = "https://docs.rs/streamcatcher"
 edition = "2018"
 
 [features]
-default = ["standard"]
-standard = ["crossbeam-utils", "parking_lot"]
-async = ["async-trait", "futures"]
+default = []
+async = ["async-trait"]
 async-std-compat = ["async", "async-std"]
 smol-compat = ["async", "smol"]
 tokio-compat = ["async", "tokio"]
 
 # Dependencies
+[dependencies]
+crossbeam-utils = "0.7"
+futures = "0.3"
+
 [dependencies.async-std]
 optional = true
 version = "1"
@@ -28,18 +31,6 @@ version = "1"
 [dependencies.async-trait]
 optional = true
 version = "0.1"
-
-[dependencies.crossbeam-utils]
-optional = true
-version = "0.7"
-
-[dependencies.futures]
-optional = true
-version = "0.3"
-
-[dependencies.parking_lot]
-version = "0.11"
-optional = true
 
 [dependencies.smol]
 optional = true
@@ -67,14 +58,6 @@ utils = { path = "utils" }
 name = "async"
 required-features = ["async-std-compat", "smol-compat", "tokio-compat"]
 
-[[test]]
-name = "catcher"
-required-features = ["standard"]
-
-[[test]]
-name = "transform"
-required-features = ["standard"]
-
 [[bench]]
 name = "vary-threads"
 harness = false
@@ -82,3 +65,4 @@ harness = false
 # Misc.
 [package.metadata.docs.rs]
 all-features = true
+

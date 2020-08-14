@@ -1,4 +1,3 @@
-//! Top-of-line description.
 use crate::{
 	cell::UnsafeCell,
 	sync::{Arc, AtomicUsize, Mutex, Ordering},
@@ -32,7 +31,11 @@ pub trait Transform<TInput: Read> {
 	///
 	/// [TransformPosition]: enum.TransformPosition.html
 	fn transform_read(&mut self, src: &mut TInput, buf: &mut [u8]) -> IoResult<TransformPosition>;
+}
 
+/// Common trait required by transforms, specifying how many contiguous bytes are needed
+/// for any `read(...)` to succeed.
+pub trait NeedsBytes {
 	/// The minimum amount of contiguous bytes required in any rope segment.
 	///
 	/// Larger choices can simplify serialisation across rope segments (*i.e.*, `2` would
@@ -53,21 +56,18 @@ impl<T: Read> Transform<T> for Identity {
 	}
 }
 
+impl NeedsBytes for Identity {}
+
 #[derive(Clone, Debug)]
 /// A shared stream buffer, using an applied input data transform.
-pub struct TxCatcher<T, Tx>
-where
-	T: Read,
-	Tx: Transform<T>,
-{
+pub struct TxCatcher<T, Tx> {
 	pub(crate) core: Arc<SharedStore<T, Tx>>,
 	pub(crate) pos: usize,
 }
 
 impl<T, Tx> TxCatcher<T, Tx>
 where
-	T: Read,
-	Tx: Transform<T> + Default,
+	Tx: NeedsBytes + Default,
 {
 	pub fn new(source: T) -> Self {
 		Self::with_tx(source, Default::default(), None)
@@ -81,8 +81,7 @@ where
 
 impl<T, Tx> TxCatcher<T, Tx>
 where
-	T: Read,
-	Tx: Transform<T>,
+	Tx: NeedsBytes,
 {
 	pub fn with_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
 		RawStore::new(source, transform, config).map(|c| Self {
@@ -92,7 +91,9 @@ where
 			pos: 0,
 		})
 	}
+}
 
+impl<T, Tx> TxCatcher<T, Tx> {
 	/// Acquire a new handle to this object, creating a new
 	/// view of the existing cached data from the beginning.
 	pub fn new_handle(&self) -> Self {
@@ -113,7 +114,7 @@ where
 	}
 
 	/// Returns whether the underlying stream is *finished*, *i.e.*, all bytes it will
-	/// produce have been stored in some fashiom.
+	/// produce have been stored in some fashion.
 	pub fn is_finished(&self) -> bool {
 		self.core.is_finished()
 	}
@@ -137,7 +138,7 @@ where
 impl<T, Tx> TxCatcher<T, Tx>
 where
 	T: Read + 'static,
-	Tx: Transform<T> + 'static,
+	Tx: Transform<T> + NeedsBytes + 'static,
 {
 	/// Spawn a new thread to read all bytes from the underlying stream
 	/// into the backing store.
@@ -160,7 +161,7 @@ where
 impl<T, Tx> Read for TxCatcher<T, Tx>
 where
 	T: Read + 'static,
-	Tx: Transform<T> + 'static,
+	Tx: Transform<T> + NeedsBytes + 'static,
 {
 	fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
 		let (bytes_read, should_finalise_here) = self.core.read_from_pos(self.pos, buf);
@@ -181,7 +182,7 @@ where
 impl<T, Tx> Seek for TxCatcher<T, Tx>
 where
 	T: Read + 'static,
-	Tx: Transform<T> + 'static,
+	Tx: Transform<T> + NeedsBytes + 'static,
 {
 	fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
 		let old_pos = self.pos as u64;
@@ -229,19 +230,11 @@ where
 }
 
 #[derive(Debug)]
-pub(crate) struct SharedStore<T, Tx>
-where
-	T: Read,
-	Tx: Transform<T>,
-{
+pub(crate) struct SharedStore<T, Tx> {
 	pub(crate) raw: UnsafeCell<RawStore<T, Tx>>,
 }
 
-impl<T, Tx> SharedStore<T, Tx>
-where
-	T: Read,
-	Tx: Transform<T>,
-{
+impl<T, Tx> SharedStore<T, Tx> {
 	// The main reason for employing `unsafe` here is *shared mutability*:
 	// due to the granularity of the locks we need, (i.e., a moving critical
 	// section otherwise lock-free), we need to assert that these operations
@@ -249,58 +242,62 @@ where
 	//
 	// Note that only our code can use this, so that we can ensure correctness
 	// and concurrent safety.
-	fn read_from_pos(&self, pos: usize, buffer: &mut [u8]) -> (IoResult<usize>, bool) {
-		self.raw
-			.with_mut(|ptr| (unsafe { &mut *ptr }).read_from_pos(pos, buffer))
-	}
-
-	fn len(&self) -> usize {
+	pub(crate) fn len(&self) -> usize {
 		self.raw.with(|ptr| (unsafe { &*ptr }).len())
 	}
 
-	fn is_finished(&self) -> bool {
+	pub(crate) fn is_finished(&self) -> bool {
 		self.raw
 			.with(|ptr| (unsafe { &*ptr }).finalised().is_source_finished())
 	}
 
-	fn is_finalised(&self) -> bool {
+	pub(crate) fn is_finalised(&self) -> bool {
 		self.raw
 			.with(|ptr| (unsafe { &*ptr }).finalised().is_backing_ready())
 	}
 
-	fn do_finalise(&self) {
+	pub(crate) fn do_finalise(&self) {
 		self.raw
 			.with_mut(|ptr| (unsafe { &mut *ptr }).do_finalise())
+	}
+
+	pub(crate) fn finaliser(&self) -> Finaliser {
+		self.raw
+			.with(|ptr| (unsafe { &*ptr }).config.spawn_finaliser.clone())
+	}
+}
+
+impl<T, Tx> SharedStore<T, Tx>
+where
+	T: Read,
+	Tx: Transform<T> + NeedsBytes,
+{
+	fn read_from_pos(&self, pos: usize, buffer: &mut [u8]) -> (IoResult<usize>, bool) {
+		self.raw
+			.with_mut(|ptr| (unsafe { &mut *ptr }).read_from_pos(pos, buffer))
 	}
 }
 
 // Shared basis for the below cache-based seekables.
 #[derive(Debug)]
-pub(crate) struct RawStore<T, Tx>
-where
-	T: Read,
-	Tx: Transform<T>,
-{
-	config: Config,
-
-	len: AtomicUsize,
-
+pub(crate) struct RawStore<T, Tx> {
+	pub(crate) config: Config,
 	pub(crate) transform: Tx,
+	pub(crate) source: Option<T>,
 
-	source: Option<T>,
+	pub(crate) lock: Mutex<()>,
+	pub(crate) rope_users_and_state: AtomicUsize,
 
-	backing_store: Option<Vec<u8>>,
-	rope: Option<LinkedList<BufferChunk>>,
-	rope_users_and_state: AtomicUsize,
-	lock: Mutex<()>,
+	pub(crate) backing_store: Option<Vec<u8>>,
+	pub(crate) rope: Option<LinkedList<BufferChunk>>,
+	pub(crate) len: AtomicUsize,
 }
 
 impl<T, Tx> RawStore<T, Tx>
 where
-	T: Read,
-	Tx: Transform<T>,
+	Tx: NeedsBytes,
 {
-	fn new(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
+	pub(crate) fn new(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
 		let config = config.unwrap_or_else(Default::default);
 		let min_bytes = transform.min_bytes_required();
 
@@ -340,12 +337,14 @@ where
 			lock: Mutex::new(()),
 		})
 	}
+}
 
-	fn len(&self) -> usize {
+impl<T, Tx> RawStore<T, Tx> {
+	pub(crate) fn len(&self) -> usize {
 		self.len.load(Ordering::Acquire)
 	}
 
-	fn finalised(&self) -> FinaliseState {
+	pub(crate) fn finalised(&self) -> FinaliseState {
 		self.rope_users_and_state.load(Ordering::Acquire).state()
 	}
 
@@ -353,7 +352,7 @@ where
 	///
 	/// Returns `true` if a new handle must be spawned by the parent
 	/// to finalise in another thread.
-	fn finalise(&mut self) -> bool {
+	pub(crate) fn finalise(&mut self) -> bool {
 		let state_on_call = self.upgrade_state(Ordering::AcqRel).state();
 
 		if state_on_call.is_source_live() {
@@ -368,7 +367,7 @@ where
 		}
 	}
 
-	fn do_finalise(&mut self) {
+	pub(crate) fn do_finalise(&mut self) {
 		if !self.config.use_backing {
 			// If we don't want to use backing, then still remove the source.
 			// This state will prevent anyone from trying to use the backing store.
@@ -433,20 +432,20 @@ where
 		self.upgrade_state(Ordering::Release);
 	}
 
-	fn upgrade_state(&self, order: Ordering) -> usize {
+	pub(crate) fn upgrade_state(&self, order: Ordering) -> usize {
 		self.rope_users_and_state
 			.fetch_add(1 << usize::SHIFT_AMT, order)
 	}
 
-	fn add_rope(&mut self) -> usize {
+	pub(crate) fn add_rope(&mut self) -> usize {
 		self.rope_users_and_state.fetch_add(1, Ordering::AcqRel)
 	}
 
-	fn remove_rope(&mut self) -> usize {
+	pub(crate) fn remove_rope(&mut self) -> usize {
 		self.rope_users_and_state.fetch_sub(1, Ordering::AcqRel)
 	}
 
-	fn remove_rope_full(&mut self) {
+	pub(crate) fn remove_rope_full(&mut self) {
 		// We can only remove the rope if the core holds the last reference.
 		// Given that the number of active handles at this moment is returned,
 		// we also know the amount *after* subtraction.
@@ -459,7 +458,7 @@ where
 		}
 	}
 
-	fn try_delete_rope(&mut self, seen_count: Holders<usize>) {
+	pub(crate) fn try_delete_rope(&mut self, seen_count: Holders<usize>) {
 		// This branch will only be visited if BOTH the rope and
 		// backing store exist simultaneously.
 		if seen_count.0 == 0 {
@@ -490,7 +489,7 @@ where
 
 	// Note: if you get a Rope, you need to later call remove_rope to remain sound.
 	// This call has the side effect of trying to safely delete the rope.
-	fn get_location(&mut self) -> (CacheReadLocation, FinaliseState) {
+	pub(crate) fn get_location(&mut self) -> (CacheReadLocation, FinaliseState) {
 		let info_before = self.add_rope();
 		let finalised = info_before.state();
 
@@ -509,6 +508,75 @@ where
 		(loc, finalised)
 	}
 
+	#[inline]
+	pub(crate) fn read_from_local(
+		&self,
+		mut pos: usize,
+		loc: CacheReadLocation,
+		buf: &mut [u8],
+		count: usize,
+	) -> usize {
+		use CacheReadLocation::*;
+		match loc {
+			Backed => {
+				let store = self
+					.backing_store
+					.as_ref()
+					.expect("Reader should not attempt to use a backing store before it exists");
+
+				if pos < self.len() {
+					buf[..count].copy_from_slice(&store[pos..pos + count]);
+
+					count
+				} else {
+					0
+				}
+			},
+			Roped => {
+				let rope = self.rope.as_ref().expect(
+					"Rope should still exist while any handles hold a ::Roped(_) \
+							 (and thus an Arc)",
+				);
+
+				let mut written = 0;
+
+				for link in rope.iter() {
+					// Although this isn't atomic, Release on store to .len ensures that
+					// all writes made before setting len STAY before len.
+					// backing_pos might be larger than len, and fluctuates
+					// due to resizes, BUT we're gated by the atomically written len,
+					// via count, which gives us a safe bound on accessible bytes this call.
+					if pos >= link.start_pos && pos < link.end_pos {
+						let local_available = link.end_pos - pos;
+						let to_write = (count - written).min(local_available);
+
+						let first_el = pos - link.start_pos;
+
+						let next_len = written + to_write;
+
+						buf[written..next_len]
+							.copy_from_slice(&link.data[first_el..first_el + to_write]);
+
+						written = next_len;
+						pos += to_write;
+					}
+
+					if written >= buf.len() {
+						break;
+					}
+				}
+
+				count
+			},
+		}
+	}
+}
+
+impl<T, Tx> RawStore<T, Tx>
+where
+	T: Read,
+	Tx: Transform<T> + NeedsBytes,
+{
 	/// Returns read count, should_upgrade, should_finalise_external
 	fn read_from_pos(&mut self, pos: usize, buf: &mut [u8]) -> (IoResult<usize>, bool) {
 		// Place read of finalised first to be certain that if we see finalised,
@@ -691,76 +759,9 @@ where
 
 		recorded_error.unwrap_or(Ok((bytes_needed - remaining_bytes, spawn_new_finaliser)))
 	}
-
-	#[inline]
-	fn read_from_local(
-		&self,
-		mut pos: usize,
-		loc: CacheReadLocation,
-		buf: &mut [u8],
-		count: usize,
-	) -> usize {
-		use CacheReadLocation::*;
-		match loc {
-			Backed => {
-				let store = self
-					.backing_store
-					.as_ref()
-					.expect("Reader should not attempt to use a backing store before it exists");
-
-				if pos < self.len() {
-					buf[..count].copy_from_slice(&store[pos..pos + count]);
-
-					count
-				} else {
-					0
-				}
-			},
-			Roped => {
-				let rope = self.rope.as_ref().expect(
-					"Rope should still exist while any handles hold a ::Roped(_) \
-							 (and thus an Arc)",
-				);
-
-				let mut written = 0;
-
-				for link in rope.iter() {
-					// Although this isn't atomic, Release on store to .len ensures that
-					// all writes made before setting len STAY before len.
-					// backing_pos might be larger than len, and fluctuates
-					// due to resizes, BUT we're gated by the atomically written len,
-					// via count, which gives us a safe bound on accessible bytes this call.
-					if pos >= link.start_pos && pos < link.end_pos {
-						let local_available = link.end_pos - pos;
-						let to_write = (count - written).min(local_available);
-
-						let first_el = pos - link.start_pos;
-
-						let next_len = written + to_write;
-
-						buf[written..next_len]
-							.copy_from_slice(&link.data[first_el..first_el + to_write]);
-
-						written = next_len;
-						pos += to_write;
-					}
-
-					if written >= buf.len() {
-						break;
-					}
-				}
-
-				count
-			},
-		}
-	}
 }
 
-impl<T, Tx> Drop for RawStore<T, Tx>
-where
-	T: Read,
-	Tx: Transform<T>,
-{
+impl<T, Tx> Drop for RawStore<T, Tx> {
 	fn drop(&mut self) {
 		// This is necesary to prevent unsoundness.
 		// I.e., 1-chunk case after finalisation if
@@ -774,18 +775,8 @@ where
 // We need to declare these as thread-safe, since we don't have a mutex around
 // several raw fields. However, the way that they are used should remain
 // consistent.
-unsafe impl<T, Tx> Sync for SharedStore<T, Tx>
-where
-	T: Read,
-	Tx: Transform<T>,
-{
-}
-unsafe impl<T, Tx> Send for SharedStore<T, Tx>
-where
-	T: Read,
-	Tx: Transform<T>,
-{
-}
+unsafe impl<T, Tx> Sync for SharedStore<T, Tx> {}
+unsafe impl<T, Tx> Send for SharedStore<T, Tx> {}
 
 /// Utility trait to scan forward by discarding bytes.
 pub trait ReadSkipExt {

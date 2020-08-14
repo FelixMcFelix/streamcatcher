@@ -1,4 +1,4 @@
-//! `AsyncRead`/`AsyncSeek` compatible stream buffers.
+//! Support types for `AsyncRead`/`AsyncSeek` compatible stream buffers.
 //! Requires the `"async"` feature.
 use crate::*;
 use async_trait::async_trait;
@@ -12,23 +12,13 @@ use futures::{
 	lock::Mutex,
 };
 use std::{
-	cell::UnsafeCell,
-	collections::LinkedList,
 	io::{Error as IoError, ErrorKind as IoErrorKind, Result as IoResult, SeekFrom},
 	marker::Unpin,
-	mem::{self, ManuallyDrop},
-	sync::{
-		atomic::{AtomicUsize, Ordering},
-		Arc,
-	},
+	mem,
+	sync::atomic::Ordering,
 };
 #[cfg(feature = "tokio-compat")]
 use tokio::io::{AsyncRead as TokioRead, AsyncSeek as TokioSeek};
-
-/// Async variant of [`Catcher`], applying no transformation to the input stream.
-///
-/// [`Catcher`]: ../trait.Catcher.html
-pub type Catcher<T> = TxCatcher<T, Identity>;
 
 /// Async variant of [`Transform`].
 ///
@@ -62,82 +52,6 @@ impl<T: AsyncRead> AsyncTransform<T> for Identity {
 	}
 }
 
-#[derive(Clone, Debug)]
-/// Async variant of [`TxCatcher`].
-///
-/// See the synchronous version for an explanation of the API,
-/// noting that [`load_all`] is now an asynchronous operation.
-///
-/// [`TxCatcher`]: ../struct.TxCatcher.html
-/// [`load_all`]: #method.load_all
-pub struct TxCatcher<T, Tx>
-where
-	T: AsyncRead + Unpin,
-	Tx: AsyncTransform<T> + Unpin,
-{
-	pub(crate) core: Arc<SharedStore<T, Tx>>,
-	pos: usize,
-}
-
-impl<T, Tx> TxCatcher<T, Tx>
-where
-	T: AsyncRead + Unpin,
-	Tx: AsyncTransform<T> + Unpin + Default,
-{
-	pub fn new(source: T) -> Self {
-		Self::with_tx(source, Default::default(), None)
-			.expect("Default config should be guaranteed valid")
-	}
-
-	pub fn with_config(source: T, config: Config) -> Result<Self> {
-		Self::with_tx(source, Default::default(), Some(config))
-	}
-}
-
-impl<T, Tx> TxCatcher<T, Tx>
-where
-	T: AsyncRead + Unpin,
-	Tx: AsyncTransform<T> + Unpin,
-{
-	pub fn with_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
-		RawStore::new(source, transform, config).map(|c| Self {
-			core: Arc::new(SharedStore {
-				raw: UnsafeCell::new(c),
-			}),
-			pos: 0,
-		})
-	}
-
-	/// Acquire a new handle to this object, to begin a new
-	/// source from the exsting cached data.
-	pub fn new_handle(&self) -> Self {
-		Self {
-			core: self.core.clone(),
-			pos: 0,
-		}
-	}
-
-	pub fn is_finalised(&self) -> bool {
-		self.core.is_finalised()
-	}
-
-	pub fn is_finished(&self) -> bool {
-		self.core.is_finished()
-	}
-
-	pub fn pos(&self) -> usize {
-		self.pos
-	}
-
-	pub fn len(&self) -> usize {
-		self.core.len()
-	}
-
-	pub fn is_empty(&self) -> bool {
-		self.len() == 0
-	}
-}
-
 impl<T, Tx> TxCatcher<T, Tx>
 where
 	T: AsyncRead + Unpin + 'static,
@@ -145,14 +59,14 @@ where
 {
 	/// Read all bytes from the underlying stream
 	/// into the backing store in the current task.
-	pub fn load_all(self) -> LoadAll<T, Tx> {
+	pub fn load_all_async(self) -> LoadAll<T, Tx> {
 		LoadAll::new(self)
 	}
 }
 
-/// Future returned by [`TxCatcher::load_all`].
+/// Future returned by [`TxCatcher::load_all_async`].
 ///
-/// [`TxCatcher::load_all`]: struct.TxCatcher.html#method.load_all
+/// [`TxCatcher::load_all_async`]: ../struct.TxCatcher.html#method.load_all_async
 pub struct LoadAll<T, Tx>
 where
 	T: AsyncRead + Unpin + 'static,
@@ -216,9 +130,8 @@ where
 		cx: &mut Context,
 		buf: &mut [u8],
 	) -> Poll<IoResult<usize>> {
-		self.core
-			.read_from_pos(self.pos, cx, buf)
-			.map(|(bytes_read, should_finalise_here)| {
+		self.core.read_from_pos_async(self.pos, cx, buf).map(
+			|(bytes_read, should_finalise_here)| {
 				if should_finalise_here {
 					let handle = self.core.clone();
 					match self.core.finaliser() {
@@ -253,7 +166,8 @@ where
 				}
 
 				bytes_read
-			})
+			},
+		)
 	}
 }
 
@@ -286,7 +200,7 @@ where
 				// Slower to load in the whole stream first, but safer.
 				// We could, in theory, use metadata as the basis,
 				// but incorrect metadata would be tricky to work around.
-				let mut end_read_future = self.new_handle().load_all();
+				let mut end_read_future = self.new_handle().load_all_async();
 				if let Poll::Pending = Future::poll(Pin::new(&mut end_read_future), cx) {
 					return Poll::Pending;
 				}
@@ -336,81 +250,20 @@ where
 // 	}
 // }
 
-#[derive(Debug)]
-pub(crate) struct SharedStore<T, Tx>
-where
-	T: AsyncRead + Unpin,
-	Tx: AsyncTransform<T> + Unpin,
-{
-	raw: UnsafeCell<RawStore<T, Tx>>,
-}
-
 impl<T, Tx> SharedStore<T, Tx>
 where
 	T: AsyncRead + Unpin,
 	Tx: AsyncTransform<T> + Unpin,
 {
-	// The main reason for employing `unsafe` here is *shared mutability*:
-	// due to the granularity of the locks we need, (i.e., a moving critical
-	// section otherwise lock-free), we need to assert that these operations
-	// are safe.
-	//
-	// Note that only our code can use this, so that we can ensure correctness
-	// and concurrent safety.
-	#[allow(clippy::mut_from_ref)]
-	pub(crate) fn get_mut_ref(&self) -> &mut RawStore<T, Tx> {
-		unsafe { &mut *self.raw.get() }
-	}
-
-	fn read_from_pos(
+	fn read_from_pos_async(
 		&self,
 		pos: usize,
 		cx: &mut Context,
-		buffer: &mut [u8],
+		buf: &mut [u8],
 	) -> Poll<(IoResult<usize>, bool)> {
-		self.get_mut_ref().read_from_pos(pos, cx, buffer)
+		self.raw
+			.with_mut(|ptr| (unsafe { &mut *ptr }).read_from_pos_async(pos, cx, buf))
 	}
-
-	fn finaliser(&self) -> Finaliser {
-		self.get_mut_ref().config.spawn_finaliser.clone()
-	}
-
-	fn len(&self) -> usize {
-		self.get_mut_ref().len()
-	}
-
-	fn is_finalised(&self) -> bool {
-		self.get_mut_ref().finalised().is_backing_ready()
-	}
-
-	fn is_finished(&self) -> bool {
-		self.get_mut_ref().finalised().is_source_finished()
-	}
-
-	fn do_finalise(&self) {
-		self.get_mut_ref().do_finalise()
-	}
-}
-
-// Shared basis for the below cache-based seekables.
-#[derive(Debug)]
-pub(crate) struct RawStore<T, Tx>
-where
-	T: AsyncRead + Unpin,
-	Tx: AsyncTransform<T> + Unpin,
-{
-	config: Config,
-
-	len: AtomicUsize,
-
-	pub(crate) transform: Tx,
-
-	source: Option<T>,
-
-	backing_store: Option<Vec<u8>>,
-	rope: Option<LinkedList<BufferChunk>>,
-	rope_users_and_state: AtomicUsize,
-	lock: Mutex<()>,
 }
 
 impl<T, Tx> RawStore<T, Tx>
@@ -418,215 +271,8 @@ where
 	T: AsyncRead + Unpin,
 	Tx: AsyncTransform<T> + Unpin,
 {
-	fn new(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
-		let config = config.unwrap_or_else(Default::default);
-
-		let min_bytes = transform.min_bytes_required();
-
-		if config.chunk_size < min_bytes {
-			return Err(CatcherError::ChunkSize);
-		};
-
-		let mut start_size = if let Some(length) = config.length_hint {
-			length
-		} else {
-			config.chunk_size
-		};
-
-		if start_size < min_bytes {
-			start_size = min_bytes;
-		}
-
-		let mut list = LinkedList::new();
-		list.push_back(BufferChunk::new(Default::default(), start_size));
-
-		Ok(Self {
-			config,
-
-			len: Default::default(),
-
-			transform,
-
-			source: Some(source),
-
-			backing_store: None,
-			rope: Some(list),
-			rope_users_and_state: AtomicUsize::new(0),
-			lock: Mutex::new(()),
-		})
-	}
-
-	fn len(&self) -> usize {
-		self.len.load(Ordering::Acquire)
-	}
-
-	fn finalised(&self) -> FinaliseState {
-		self.rope_users_and_state.load(Ordering::Acquire).state()
-	}
-
-	/// Marks stream as finished.
-	///
-	/// Returns `true` if a new handle must be spawned by the parent
-	/// to finalise in another thread.
-	fn finalise(&mut self) -> bool {
-		let state_on_call = self.upgrade_state(Ordering::AcqRel).state();
-
-		if state_on_call.is_source_live() {
-			if self.config.spawn_finaliser.run_elsewhere() {
-				true
-			} else {
-				self.do_finalise();
-				false
-			}
-		} else {
-			false
-		}
-	}
-
-	fn do_finalise(&mut self) {
-		if !self.config.use_backing {
-			// If we don't want to use backing, then still remove the source.
-			// This state will prevent anyone from trying to use the backing store.
-			self.source = None;
-			return;
-		}
-
-		let backing_len = self.len();
-
-		// Move the rope of bytes into the backing store.
-		let rope = self
-			.rope
-			.as_mut()
-			.expect("Writes should only occur while the rope exists.");
-
-		if rope.len() > 1 {
-			// Allocate one big store, then start moving entries over
-			// chunk-by-chunk.
-			let mut back = vec![0u8; backing_len];
-
-			for el in rope.iter() {
-				let start = el.start_pos;
-				let end = el.end_pos;
-				back[start..end].copy_from_slice(&el.data[..end - start]);
-			}
-
-			// Insert the new backing store, but DO NOT purge the old.
-			// This is left to the last Arc<> holder of the rope.
-			self.backing_store = Some(back);
-		} else {
-			// Least work, but unsafe.
-			// We move the first chunk's buffer to become the backing store,
-			// temporarily aliasing it until the list is destroyed.
-			// In this case, when the list is destroyed, the first element
-			// MUST be leaked to keep the backing store memory valid.
-			//
-			// (see remove_rope for this leakage)
-			//
-			// The alternative (write first chunk into always-present
-			// backing store) mandates a lock for the final expansion, because
-			// the backing store is IN USE. Thus, we can't employ it.
-			if let Some(el) = rope.front_mut() {
-				// We can be certain that this pointer is not invalidated because:
-				// * All writes to the rope/rope are finished. Thus, no
-				//   reallocations/moves.
-				// * The Vec will live exactly as long as the RawStore, pointer never escapes.
-				// Likewise, we knoe that it is safe to build the new vector as:
-				// * The stored type and pointer do not change, so alignment is preserved.
-				// * The data pointer is created by an existing Vec<T>.
-				self.backing_store = Some(unsafe {
-					let data = el.data.as_mut_ptr();
-					Vec::from_raw_parts(data, el.data.len(), el.data.capacity())
-				})
-			}
-		}
-
-		// Drop the old input.
-		self.source = None;
-
-		// It's crucial that we do this *last*, as this is the signal
-		// for other threads to migrate from rope to backing store.
-		self.upgrade_state(Ordering::Release);
-	}
-
-	fn upgrade_state(&self, order: Ordering) -> usize {
-		self.rope_users_and_state
-			.fetch_add(1 << usize::SHIFT_AMT, order)
-	}
-
-	fn add_rope(&mut self) -> usize {
-		self.rope_users_and_state.fetch_add(1, Ordering::AcqRel)
-	}
-
-	fn remove_rope(&mut self) -> usize {
-		self.rope_users_and_state.fetch_sub(1, Ordering::AcqRel)
-	}
-
-	fn remove_rope_full(&mut self) {
-		// We can only remove the rope if the core holds the last reference.
-		// Given that the number of active handles at this moment is returned,
-		// we also know the amount *after* subtraction.
-		let val = self.remove_rope() - 1;
-		let remaining = val.holders();
-		let finished = val.state();
-
-		if finished.is_backing_ready() {
-			self.try_delete_rope(remaining);
-		}
-	}
-
-	fn try_delete_rope(&mut self, seen_count: Holders<usize>) {
-		// This branch will only be visited if BOTH the rope and
-		// backing store exist simultaneously.
-		if seen_count.0 == 0 {
-			// In worst case, several upgrades might pile up.
-			// Only one holder should concern itself with drop logic,
-			// the rest should carry on and start using the backing store.
-			let maybe_lock = self.lock.try_lock();
-			if maybe_lock.is_none() {
-				return;
-			}
-
-			if let Some(rope) = &mut self.rope {
-				// Prevent the backing store from being wiped out
-				// if the first link in the rope sufficed.
-				// This ensures safety as we undo the aliasing
-				// in the above special case.
-				if rope.len() == 1 {
-					let el = rope
-						.pop_front()
-						.expect("Length of rope was established as >= 1.");
-					ManuallyDrop::new(el.data);
-				}
-			}
-
-			// Drop everything else.
-			self.rope = None;
-		}
-	}
-
-	// Note: if you get a Rope, you need to later call remove_rope to remain sound.
-	// This call has the side effect of trying to safely delete the rope.
-	fn get_location(&mut self) -> (CacheReadLocation, FinaliseState) {
-		let info_before = self.add_rope();
-		let finalised = info_before.state();
-
-		let loc = if finalised.is_backing_ready() {
-			// try to remove rope.
-			// This gives the user count *before*
-			let remaining_users = info_before.holders();
-			self.try_delete_rope(remaining_users);
-			self.rope_users_and_state.fetch_sub(1, Ordering::AcqRel);
-
-			CacheReadLocation::Backed
-		} else {
-			CacheReadLocation::Roped
-		};
-
-		(loc, finalised)
-	}
-
 	/// Returns read count, should_upgrade, should_finalise_external
-	fn read_from_pos(
+	fn read_from_pos_async(
 		&mut self,
 		pos: usize,
 		cx: &mut Context,
@@ -679,7 +325,8 @@ where
 					// and might not!
 					remaining_in_store = backing_len - pos - read;
 					if remaining_in_store == 0 && finalised.is_source_live() {
-						if let Poll::Ready(read_count) = self.fill_from_source(cx, buf.len() - read)
+						if let Poll::Ready(read_count) =
+							self.fill_from_source_async(cx, buf.len() - read)
 						{
 							progress_before_pending = true;
 							if let Ok((read_count, finalise_elsewhere)) = read_count {
@@ -735,7 +382,7 @@ where
 	// * drawing bytes from the source
 	// * modifying len
 	// * modifying encoder state
-	fn fill_from_source(
+	fn fill_from_source_async(
 		&mut self,
 		cx: &mut Context,
 		mut bytes_needed: usize,
@@ -829,100 +476,6 @@ where
 			Poll::Pending
 		}
 	}
-
-	#[inline]
-	fn read_from_local(
-		&self,
-		mut pos: usize,
-		loc: CacheReadLocation,
-		buf: &mut [u8],
-		count: usize,
-	) -> usize {
-		use CacheReadLocation::*;
-		match loc {
-			Backed => {
-				let store = self
-					.backing_store
-					.as_ref()
-					.expect("Reader should not attempt to use a backing store before it exists");
-
-				if pos < self.len() {
-					buf[..count].copy_from_slice(&store[pos..pos + count]);
-
-					count
-				} else {
-					0
-				}
-			},
-			Roped => {
-				let rope = self.rope.as_ref().expect(
-					"Rope should still exist while any handles hold a ::Roped(_) \
-							 (and thus an Arc)",
-				);
-
-				let mut written = 0;
-
-				for link in rope.iter() {
-					// Although this isn't atomic, Release on store to .len ensures that
-					// all writes made before setting len STAY before len.
-					// backing_pos might be larger than len, and fluctuates
-					// due to resizes, BUT we're gated by the atomically written len,
-					// via count, which gives us a safe bound on accessible bytes this call.
-					if pos >= link.start_pos && pos < link.end_pos {
-						let local_available = link.end_pos - pos;
-						let to_write = (count - written).min(local_available);
-
-						let first_el = pos - link.start_pos;
-
-						let next_len = written + to_write;
-
-						buf[written..next_len]
-							.copy_from_slice(&link.data[first_el..first_el + to_write]);
-
-						written = next_len;
-						pos += to_write;
-					}
-
-					if written >= buf.len() {
-						break;
-					}
-				}
-
-				count
-			},
-		}
-	}
-}
-
-impl<T, Tx> Drop for RawStore<T, Tx>
-where
-	T: AsyncRead + Unpin,
-	Tx: AsyncTransform<T> + Unpin,
-{
-	fn drop(&mut self) {
-		// This is necesary to prevent unsoundness.
-		// I.e., 1-chunk case after finalisation if
-		// one handle is left in Rope, then dropped last
-		// would cause a double free due to aliased chunk.
-		let remaining_users = self.rope_users_and_state.load(Ordering::Acquire).holders();
-		self.try_delete_rope(remaining_users);
-	}
-}
-
-// We need to declare these as thread-safe, since we don't have a mutex around
-// several raw fields. However, the way that they are used should remain
-// consistent.
-unsafe impl<T, Tx> Sync for SharedStore<T, Tx>
-where
-	T: AsyncRead + Unpin,
-	Tx: AsyncTransform<T> + Unpin,
-{
-}
-unsafe impl<T, Tx> Send for SharedStore<T, Tx>
-where
-	T: AsyncRead + Unpin,
-	Tx: AsyncTransform<T> + Unpin,
-{
 }
 
 #[async_trait]
