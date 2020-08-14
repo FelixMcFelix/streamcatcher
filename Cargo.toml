@@ -21,10 +21,6 @@ smol-compat = ["async", "smol"]
 tokio-compat = ["async", "tokio"]
 
 # Dependencies
-[dependencies.parking_lot]
-version = "0.11"
-optional = true
-
 [dependencies.async-std]
 optional = true
 version = "1"
@@ -36,6 +32,10 @@ version = "0.1"
 [dependencies.futures]
 optional = true
 version = "0.3"
+
+[dependencies.parking_lot]
+version = "0.11"
+optional = true
 
 [dependencies.smol]
 optional = true

@@ -1,9 +1,9 @@
 //! Top-of-line description.
 use crate::{
-	*,
 	cell::UnsafeCell,
-	sync::{Arc, AtomicU8, AtomicUsize, Ordering, Mutex},
+	sync::{Arc, AtomicUsize, Mutex, Ordering},
 	thread::JoinHandle,
+	*,
 };
 use std::{
 	collections::LinkedList,
@@ -249,7 +249,8 @@ where
 	// Note that only our code can use this, so that we can ensure correctness
 	// and concurrent safety.
 	fn read_from_pos(&self, pos: usize, buffer: &mut [u8]) -> (IoResult<usize>, bool) {
-		self.raw.with_mut(|ptr| (unsafe { &mut *ptr }).read_from_pos(pos, buffer))
+		self.raw
+			.with_mut(|ptr| (unsafe { &mut *ptr }).read_from_pos(pos, buffer))
 	}
 
 	fn len(&self) -> usize {
@@ -257,15 +258,18 @@ where
 	}
 
 	fn is_finished(&self) -> bool {
-		self.raw.with(|ptr| (unsafe { &*ptr }).finalised().is_source_finished())
+		self.raw
+			.with(|ptr| (unsafe { &*ptr }).finalised().is_source_finished())
 	}
 
 	fn is_finalised(&self) -> bool {
-		self.raw.with(|ptr| (unsafe { &*ptr }).finalised().is_backing_ready())
+		self.raw
+			.with(|ptr| (unsafe { &*ptr }).finalised().is_backing_ready())
 	}
 
 	fn do_finalise(&self) {
-		self.raw.with_mut(|ptr| (unsafe { &mut *ptr }).do_finalise())
+		self.raw
+			.with_mut(|ptr| (unsafe { &mut *ptr }).do_finalise())
 	}
 }
 
@@ -279,7 +283,6 @@ where
 	config: Config,
 
 	len: AtomicUsize,
-	finalised: AtomicU8,
 
 	pub(crate) transform: Tx,
 
@@ -287,7 +290,7 @@ where
 
 	backing_store: Option<Vec<u8>>,
 	rope: Option<LinkedList<BufferChunk>>,
-	rope_users: AtomicUsize,
+	rope_users_and_state: AtomicUsize,
 	lock: Mutex<()>,
 }
 
@@ -325,7 +328,6 @@ where
 			config,
 
 			len: Default::default(),
-			finalised: AtomicU8::new(FinaliseState::Live.into()),
 
 			transform,
 
@@ -333,7 +335,7 @@ where
 
 			backing_store: None,
 			rope: Some(list),
-			rope_users: AtomicUsize::new(1),
+			rope_users_and_state: AtomicUsize::new(0),
 			lock: Mutex::new(()),
 		})
 	}
@@ -343,7 +345,7 @@ where
 	}
 
 	fn finalised(&self) -> FinaliseState {
-		self.finalised.load(Ordering::Acquire).into()
+		self.rope_users_and_state.load(Ordering::Acquire).state()
 	}
 
 	/// Marks stream as finished.
@@ -351,14 +353,7 @@ where
 	/// Returns `true` if a new handle must be spawned by the parent
 	/// to finalise in another thread.
 	fn finalise(&mut self) -> bool {
-		let state_on_call: FinaliseState = self
-			.finalised
-			.compare_and_swap(
-				FinaliseState::Live.into(),
-				FinaliseState::Finalising.into(),
-				Ordering::AcqRel,
-			)
-			.into();
+		let state_on_call = self.upgrade_state(Ordering::AcqRel).state();
 
 		if state_on_call.is_source_live() {
 			if self.config.spawn_finaliser.run_elsewhere() {
@@ -377,8 +372,6 @@ where
 			// If we don't want to use backing, then still remove the source.
 			// This state will prevent anyone from trying to use the backing store.
 			self.source = None;
-			self.finalised
-				.store(FinaliseState::Finalising.into(), Ordering::Release);
 			return;
 		}
 
@@ -436,29 +429,39 @@ where
 
 		// It's crucial that we do this *last*, as this is the signal
 		// for other threads to migrate from rope to backing store.
-		self.finalised
-			.store(FinaliseState::Finalised.into(), Ordering::Release);
+		self.upgrade_state(Ordering::Release);
 	}
 
-	fn add_rope(&mut self) {
-		self.rope_users.fetch_add(1, Ordering::AcqRel);
+	fn upgrade_state(&self, order: Ordering) -> usize {
+		self.rope_users_and_state
+			.fetch_add(1 << usize::SHIFT_AMT, order)
 	}
 
-	fn remove_rope_ref(&mut self, finished: FinaliseState) {
+	fn add_rope(&mut self) -> usize {
+		self.rope_users_and_state.fetch_add(1, Ordering::AcqRel)
+	}
+
+	fn remove_rope(&mut self) -> usize {
+		self.rope_users_and_state.fetch_sub(1, Ordering::AcqRel)
+	}
+
+	fn remove_rope_full(&mut self) {
 		// We can only remove the rope if the core holds the last reference.
 		// Given that the number of active handles at this moment is returned,
 		// we also know the amount *after* subtraction.
-		let remaining = self.rope_users.fetch_sub(1, Ordering::AcqRel) - 1;
+		let val = self.remove_rope() - 1;
+		let remaining = val.holders();
+		let finished = val.state();
 
 		if finished.is_backing_ready() {
 			self.try_delete_rope(remaining);
 		}
 	}
 
-	fn try_delete_rope(&mut self, seen_count: usize) {
+	fn try_delete_rope(&mut self, seen_count: Holders<usize>) {
 		// This branch will only be visited if BOTH the rope and
 		// backing store exist simultaneously.
-		if seen_count == 1 {
+		if seen_count.0 == 0 {
 			// In worst case, several upgrades might pile up.
 			// Only one holder should concern itself with drop logic,
 			// the rest should carry on and start using the backing store.
@@ -482,22 +485,27 @@ where
 
 			// Drop everything else.
 			self.rope = None;
-			self.rope_users.store(0, Ordering::Release);
 		}
+
+		#[cfg(loom)]
+		::loom::thread::yield_now();
 	}
 
 	// Note: if you get a Rope, you need to later call remove_rope to remain sound.
 	// This call has the side effect of trying to safely delete the rope.
 	fn get_location(&mut self) -> (CacheReadLocation, FinaliseState) {
-		let finalised = self.finalised();
+		let info_before = self.add_rope();
+		let finalised = info_before.state();
 
 		let loc = if finalised.is_backing_ready() {
 			// try to remove rope.
-			let remaining_users = self.rope_users.load(Ordering::Acquire);
+			// This gives the user count *before*
+			let remaining_users = info_before.holders();
 			self.try_delete_rope(remaining_users);
+			self.rope_users_and_state.fetch_sub(1, Ordering::AcqRel);
+
 			CacheReadLocation::Backed
 		} else {
-			self.add_rope();
 			CacheReadLocation::Roped
 		};
 
@@ -558,6 +566,8 @@ where
 
 					// Unlocked here.
 					mem::drop(guard);
+					#[cfg(loom)]
+					::loom::thread::yield_now();
 				}
 
 				if remaining_in_store > 0 {
@@ -581,7 +591,7 @@ where
 		};
 
 		if loc == CacheReadLocation::Roped {
-			self.remove_rope_ref(finalised);
+			self.remove_rope_full();
 		}
 
 		(out, should_finalise_external)
@@ -742,7 +752,7 @@ where
 		// I.e., 1-chunk case after finalisation if
 		// one handle is left in Rope, then dropped last
 		// would cause a double free due to aliased chunk.
-		let remaining_users = self.rope_users.load(Ordering::Acquire);
+		let remaining_users = self.rope_users_and_state.load(Ordering::Acquire).holders();
 		self.try_delete_rope(remaining_users);
 	}
 }

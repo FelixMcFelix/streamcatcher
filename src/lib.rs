@@ -6,7 +6,7 @@
 //! *new data* ever need to lock the data structure, and do not prevent earlier reads from occurring.
 //!
 //! # Features
-//! 
+//!
 //! * Lockless access to pre-read data and finished streams.
 //! * Transparent caching of newly read data.
 //! * Allows seeking on read-only bytestreams.
@@ -68,7 +68,7 @@
 //!
 //! catcher.seek(SeekFrom::Current(-256));
 //! assert_eq!(io::copy(&mut catcher, &mut io::sink()).unwrap(), 256);
-//! 
+//!
 //! ```
 //!
 //! [this blog post]: https://mcfelix.me/blog/shared-buffers/
@@ -155,7 +155,6 @@ pub enum Finaliser {
 	NewThread,
 	// #[cfg(feature = "async")]
 	// Async(Box<dyn Spawn>),
-
 	#[cfg(feature = "async-std-compat")]
 	/// Use the async-std runtime for backing-store creation.
 	///
@@ -283,6 +282,37 @@ impl BufferChunk {
 	}
 }
 
+trait RopeAndState {
+	const SHIFT_AMT: usize;
+	const HOLD_FLAGS: usize = !(0b11 << Self::SHIFT_AMT);
+
+	fn state(self) -> FinaliseState;
+	fn upgrade_state(self) -> Self;
+
+	fn holders(self) -> Holders<Self>
+	where
+		Self: Sized;
+}
+
+impl RopeAndState for usize {
+	const SHIFT_AMT: usize = (usize::MAX.count_ones() as usize) - 2;
+
+	fn state(self) -> FinaliseState {
+		FinaliseState::from(self >> Self::SHIFT_AMT)
+	}
+
+	fn upgrade_state(self) -> Self {
+		self + (1 << Self::SHIFT_AMT)
+	}
+
+	fn holders(self) -> Holders<Self> {
+		Holders(self & Self::HOLD_FLAGS)
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Holders<T>(T);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CacheReadLocation {
 	Roped,
@@ -296,8 +326,8 @@ enum FinaliseState {
 	Finalised,
 }
 
-impl From<u8> for FinaliseState {
-	fn from(val: u8) -> Self {
+impl From<usize> for FinaliseState {
+	fn from(val: usize) -> Self {
 		use FinaliseState::*;
 		match val {
 			0 => Live,
@@ -308,7 +338,7 @@ impl From<u8> for FinaliseState {
 	}
 }
 
-impl From<FinaliseState> for u8 {
+impl From<FinaliseState> for usize {
 	fn from(val: FinaliseState) -> Self {
 		use FinaliseState::*;
 		match val {
@@ -330,5 +360,35 @@ impl FinaliseState {
 
 	fn is_backing_ready(self) -> bool {
 		matches!(self, FinaliseState::Finalised)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn state_upgrade() {
+		const INIT_USERS: usize =
+			0b0000_0000_0000_0000_0000_0000_0000_0000_0000_0010_0000_0100_0000_0000_0000_0011;
+
+		const UPGRADE_1: usize =
+			0b0100_0000_0000_0000_0000_0000_0000_0000_0000_0010_0000_0100_0000_0000_0000_0011;
+		const UPGRADE_2: usize =
+			0b1000_0000_0000_0000_0000_0000_0000_0000_0000_0010_0000_0100_0000_0000_0000_0011;
+
+		let u1 = INIT_USERS.upgrade_state();
+		let u2 = u1.upgrade_state();
+
+		assert_eq!(u1, UPGRADE_1);
+		assert_eq!(u2, UPGRADE_2);
+
+		assert_eq!(INIT_USERS.state(), FinaliseState::Live);
+		assert_eq!(u1.state(), FinaliseState::Finalising);
+		assert_eq!(u2.state(), FinaliseState::Finalised);
+
+		assert_eq!(INIT_USERS.holders().0, INIT_USERS);
+		assert_eq!(u1.holders().0, INIT_USERS);
+		assert_eq!(u2.holders().0, INIT_USERS);
 	}
 }

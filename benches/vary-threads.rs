@@ -1,23 +1,11 @@
-use criterion::{
-	black_box,
-	criterion_group,
-	criterion_main,
-	Bencher,
-	BenchmarkId,
-	Criterion,
-};
+use criterion::{black_box, criterion_group, criterion_main, Bencher, BenchmarkId, Criterion};
 use std::{
 	io::Read,
+	sync::Arc,
 	thread::{self, JoinHandle},
 	time::Duration,
-	sync::Arc,
 };
-use streamcatcher::{
-	Catcher,
-	Config,
-	Finaliser,
-	ReadSkipExt,
-};
+use streamcatcher::{Catcher, Config, Finaliser, ReadSkipExt};
 use synchronoise::SignalEvent;
 use utils::NaiveSharedRead;
 
@@ -68,16 +56,14 @@ pub fn default(c: &mut Criterion) {
 
 	let mut group = c.benchmark_group("Concurrent Reader Count (10MB, in-memory)");
 	for i in (1..101).step_by(10) {
-		group.bench_with_input(BenchmarkId::new("Naive", i), &i,
-			move |b, i| {
-				let src = black_box(NaiveSharedRead::new(&input[..]));
-				read_to_end(b, *i, src);
-			});
-		group.bench_with_input(BenchmarkId::new("Streamcatcher", i), &i,
-			move |b, i| {
-				let src = black_box(Catcher::new(&input[..]));
-				read_to_end(b, *i, src);
-			});
+		group.bench_with_input(BenchmarkId::new("Naive", i), &i, move |b, i| {
+			let src = black_box(NaiveSharedRead::new(&input[..]));
+			read_to_end(b, *i, src);
+		});
+		group.bench_with_input(BenchmarkId::new("Streamcatcher", i), &i, move |b, i| {
+			let src = black_box(Catcher::new(&input[..]));
+			read_to_end(b, *i, src);
+		});
 	}
 
 	group.finish();
@@ -93,20 +79,19 @@ pub fn size_known(c: &mut Criterion) {
 	let mut cfg = Config::new();
 	cfg.length_hint(Some(10_000_000));
 
-	let mut group = c.benchmark_group("Concurrent Reader Count (10MB, in-memory, size hint correct)");
+	let mut group =
+		c.benchmark_group("Concurrent Reader Count (10MB, in-memory, size hint correct)");
 	for i in (1..101).step_by(10) {
 		// let c = cfg.clone();
-		group.bench_with_input(BenchmarkId::new("Naive", i), &i,
-			move |b, i| {
-				let src = black_box(NaiveSharedRead::new(&input[..]));
-				read_to_end(b, *i, src);
-			});
-		group.bench_with_input(BenchmarkId::new("Streamcatcher", i), &i,
-			|b, i| {
-				let c = cfg.clone();
-				let src = black_box(Catcher::with_config(&input[..], c).unwrap());
-				read_to_end(b, *i, src);
-			});
+		group.bench_with_input(BenchmarkId::new("Naive", i), &i, move |b, i| {
+			let src = black_box(NaiveSharedRead::new(&input[..]));
+			read_to_end(b, *i, src);
+		});
+		group.bench_with_input(BenchmarkId::new("Streamcatcher", i), &i, |b, i| {
+			let c = cfg.clone();
+			let src = black_box(Catcher::with_config(&input[..], c).unwrap());
+			read_to_end(b, *i, src);
+		});
 	}
 
 	group.finish();
@@ -130,16 +115,14 @@ pub fn prefinalised(c: &mut Criterion) {
 
 	let mut group = c.benchmark_group("Concurrent Reader Count (10MB, in-memory, pre-read)");
 	for i in (1..101).step_by(10) {
-		group.bench_with_input(BenchmarkId::new("Naive", i), &i,
-			|b, i| {
-				let src = shared_naive.clone();
-				read_to_end(b, *i, src);
-			});
-		group.bench_with_input(BenchmarkId::new("Streamcatcher", i), &i,
-			|b, i| {
-				let src = shared_catcher.clone();
-				read_to_end(b, *i, src);
-			});
+		group.bench_with_input(BenchmarkId::new("Naive", i), &i, |b, i| {
+			let src = shared_naive.clone();
+			read_to_end(b, *i, src);
+		});
+		group.bench_with_input(BenchmarkId::new("Streamcatcher", i), &i, |b, i| {
+			let src = shared_catcher.clone();
+			read_to_end(b, *i, src);
+		});
 	}
 
 	group.finish();
