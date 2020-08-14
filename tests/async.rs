@@ -2,7 +2,7 @@
 use ::tokio::io::{AsyncRead as TokioRead, AsyncSeek as TokioSeek};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, Cursor};
 use std::io::SeekFrom;
-use streamcatcher::{future::*, Config, Finaliser, Result};
+use streamcatcher::{future::*, Config, Finaliser};
 
 async fn identity() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];

@@ -1,5 +1,10 @@
-use std::io::{Read, Seek, SeekFrom};
+use std::{
+	io::{Read, Seek, SeekFrom},
+	sync::Arc,
+	thread,
+};
 use streamcatcher::*;
+use synchronoise::SignalEvent;
 
 #[test]
 fn identity() {
@@ -91,7 +96,7 @@ fn seek_current() {
 	const START: usize = 6;
 	const SHIFT: i64 = -2;
 
-	let pos = catcher.seek(SeekFrom::Start(START as u64));
+	let _pos = catcher.seek(SeekFrom::Start(START as u64));
 	let pos = catcher.seek(SeekFrom::Current(SHIFT));
 
 	let out = catcher
@@ -126,5 +131,49 @@ fn read_after_complete() {
 
 #[test]
 fn shared_access() {
-	// unimplemented!()
+	const BYTES_TO_STORE: usize = 50_000_000;
+	const THREAD_COUNT: usize = 20;
+
+	let mut perma_array = Box::new(vec![]);
+	for i in 0..BYTES_TO_STORE {
+		perma_array.push(i as u8);
+	}
+	let input: &'static _ = Box::leak(perma_array);
+
+	let mut cfg = Config::new();
+	cfg.spawn_finaliser(Finaliser::InPlace);
+
+	let catcher = Catcher::with_config(&input[..], cfg).unwrap();
+
+	//
+
+	let sig = Arc::new(SignalEvent::manual(false));
+
+	let mut handles = Vec::with_capacity(THREAD_COUNT);
+
+	for _i in 0..THREAD_COUNT {
+		let mut h = catcher.clone();
+		let s = sig.clone();
+		handles.push(thread::spawn(move || {
+			s.wait();
+			let mut buf = [0u8; 8_192];
+			let mut ct = 0;
+			while let Ok(n) = h.read(&mut buf[..]) {
+				if n == 0 {
+					break;
+				}
+				for i in 0..n {
+					assert_eq!(buf[i], (ct + i) as u8);
+				}
+				ct += n;
+			}
+
+			ct
+		}));
+	}
+
+	sig.signal();
+	for handle in handles.drain(..) {
+		assert_eq!(handle.join().unwrap(), BYTES_TO_STORE);
+	}
 }

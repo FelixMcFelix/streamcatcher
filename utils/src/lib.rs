@@ -1,10 +1,6 @@
 use parking_lot::RwLock;
 use std::{
-	io::{
-		self,
-		Read,
-		Result as IoResult,
-	},
+	io::{self, Read, Result as IoResult},
 	sync::Arc,
 };
 
@@ -49,11 +45,10 @@ impl<T> NaiveSharedRead<T> {
 
 impl<T: Read> Read for NaiveSharedRead<T> {
 	fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-		self.read_from_pos(buf, self.pos)
-			.map(|bytes| {
-				self.pos += bytes;
-				bytes
-			})
+		self.read_from_pos(buf, self.pos).map(|bytes| {
+			self.pos += bytes;
+			bytes
+		})
 	}
 }
 

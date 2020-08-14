@@ -555,10 +555,8 @@ where
 
 					#[cfg(not(loom))]
 					if guard.is_none() {
-						loop {
-							backoff.spin();
-							continue 'byteread;
-						}
+						backoff.spin();
+						continue 'byteread;
 					}
 
 					finalised = self.finalised();
