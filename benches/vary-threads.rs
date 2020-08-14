@@ -55,7 +55,7 @@ pub fn default(c: &mut Criterion) {
 	let input: &'static _ = Box::leak(perma_array);
 
 	let mut group = c.benchmark_group("Concurrent Reader Count (10MB, in-memory)");
-	for i in (1..101).step_by(10) {
+	for i in (1..102).step_by(20) {
 		group.bench_with_input(BenchmarkId::new("Naive", i), &i, move |b, i| {
 			let src = black_box(NaiveSharedRead::new(&input[..]));
 			read_to_end(b, *i, src);
@@ -81,7 +81,7 @@ pub fn size_known(c: &mut Criterion) {
 
 	let mut group =
 		c.benchmark_group("Concurrent Reader Count (10MB, in-memory, size hint correct)");
-	for i in (1..101).step_by(10) {
+	for i in (1..102).step_by(20) {
 		// let c = cfg.clone();
 		group.bench_with_input(BenchmarkId::new("Naive", i), &i, move |b, i| {
 			let src = black_box(NaiveSharedRead::new(&input[..]));
@@ -114,7 +114,7 @@ pub fn prefinalised(c: &mut Criterion) {
 	shared_naive.clone().skip(10_000_000);
 
 	let mut group = c.benchmark_group("Concurrent Reader Count (10MB, in-memory, pre-read)");
-	for i in (1..101).step_by(10) {
+	for i in (1..102).step_by(20) {
 		group.bench_with_input(BenchmarkId::new("Naive", i), &i, |b, i| {
 			let src = shared_naive.clone();
 			read_to_end(b, *i, src);

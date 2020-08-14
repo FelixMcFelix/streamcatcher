@@ -5,6 +5,7 @@ use crate::{
 	thread::JoinHandle,
 	*,
 };
+use crossbeam_utils::Backoff;
 use std::{
 	collections::LinkedList,
 	io::{
@@ -469,7 +470,6 @@ where
 			if maybe_lock.is_none() {
 				return;
 			}
-
 			if let Some(rope) = &mut self.rope {
 				// Prevent the backing store from being wiped out
 				// if the first link in the rope sufficed.
@@ -486,9 +486,6 @@ where
 			// Drop everything else.
 			self.rope = None;
 		}
-
-		#[cfg(loom)]
-		::loom::thread::yield_now();
 	}
 
 	// Note: if you get a Rope, you need to later call remove_rope to remain sound.
@@ -531,8 +528,9 @@ where
 		} else {
 			let mut read = 0;
 			let mut base_result = None;
+			let backoff = Backoff::new();
 
-			loop {
+			'byteread: loop {
 				finalised = self.finalised();
 				backing_len = self.len();
 				let mut remaining_in_store = backing_len - pos - read;
@@ -543,8 +541,15 @@ where
 					let lock: *mut Mutex<()> = &mut self.lock;
 					let guard = unsafe {
 						let lock = &*lock;
-						lock.lock()
+						lock.try_lock()
 					};
+
+					if guard.is_none() {
+						loop {
+							backoff.spin();
+							continue 'byteread;
+						}
+					}
 
 					finalised = self.finalised();
 					backing_len = self.len();
@@ -571,6 +576,7 @@ where
 				}
 
 				if remaining_in_store > 0 {
+					backoff.reset();
 					let count = remaining_in_store.min(buf.len() - read);
 					read += self.read_from_local(pos, loc, &mut buf[read..], count);
 				}
