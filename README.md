@@ -13,6 +13,7 @@ contention over safe read-only data, or unnecessary stalling. Only threads who r
 * Piecewise allocation to reduce copying and support unknown input lengths.
 * Optional acceleration of reads on stream completion by copying to a single backing store.
 * (Stateful) bytestream transformations.
+* Async support with the `"async"` feature, and runtimes via [`"async-std-compat"`, `"smol-compat"`, `"tokio-compat"`].
 
 The main algorithm is outlined in [this blog post], with rope
 reference tracking moved to occur only in the core.

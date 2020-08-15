@@ -116,13 +116,6 @@ pub enum CatcherError {
 	/// [`Transform`]: trait.Transform.html
 	/// [`minimum required contiguous byte count`]: trait.Transform.html#method.min_bytes_required
 	ChunkSize,
-
-	/// Returned when an async-only [`Finaliser`] is passed into a synchronous
-	/// [`TxCatcher`].
-	///
-	/// [`Finaliser`]: enum.Finaliser.html
-	/// [`TxCatcher`]: struct.TxCatcher.html
-	IllegalFinaliser,
 }
 
 impl std::fmt::Display for CatcherError {
@@ -188,11 +181,11 @@ impl Finaliser {
 #[derive(Clone, Debug)]
 /// Options controlling backing store allocation, finalisation, and so on.
 pub struct Config {
-	chunk_size: usize,
-	spawn_finaliser: Finaliser,
-	use_backing: bool,
-	length_hint: Option<usize>,
-	read_burst_len: usize,
+	pub chunk_size: usize,
+	pub spawn_finaliser: Finaliser,
+	pub use_backing: bool,
+	pub length_hint: Option<usize>,
+	pub read_burst_len: usize,
 }
 
 impl Config {
@@ -213,7 +206,7 @@ impl Config {
 	/// but may reserve too much space before the struct is finalised.
 	///
 	/// *Defaults to `4096`. Must be larger than the transform's minimum chunk size.*
-	pub fn chunk_size(&mut self, size: usize) -> &mut Self {
+	pub fn chunk_size(mut self, size: usize) -> Self {
 		self.chunk_size = size;
 		self
 	}
@@ -221,7 +214,7 @@ impl Config {
 	/// Allocate a single contiguous backing store to speed up reads after the stream ends.
 	///
 	/// *Defaults to `true`.*
-	pub fn use_backing(&mut self, val: bool) -> &mut Self {
+	pub fn use_backing(mut self, val: bool) -> Self {
 		self.use_backing = val;
 		self
 	}
@@ -234,7 +227,7 @@ impl Config {
 	/// *Defaults to [`Finaliser::NewThread`].*
 	///
 	/// [`Finaliser::NewThread`]: enum.FInaliser.html#variant.NewThread
-	pub fn spawn_finaliser(&mut self, finaliser: Finaliser) -> &mut Self {
+	pub fn spawn_finaliser(mut self, finaliser: Finaliser) -> Self {
 		self.spawn_finaliser = finaliser;
 		self
 	}
@@ -246,9 +239,33 @@ impl Config {
 	/// *Defaults to `None`.*
 	///
 	/// [`chunk_size`]: #method.chunk_size
-	pub fn length_hint(&mut self, hint: Option<usize>) -> &mut Self {
+	pub fn length_hint(mut self, hint: Option<usize>) -> Self {
 		self.length_hint = hint;
 		self
+	}
+
+	/// The minimum size of reads to attempt from the input stream,
+	/// if possible.
+	///
+	/// *Defaults to `4096`.*
+	pub fn read_burst_len(mut self, burst: usize) -> Self {
+		self.read_burst_len = burst;
+		self
+	}
+
+	/// Convert this configuration into a standard [Catcher].
+	///
+	/// [Catcher]: type.Catcher.html
+	pub fn build<T>(self, source: T) -> Result<Catcher<T>> {
+		Catcher::with_config(source, self)
+	}
+
+	/// Convert this configuration into a [TxCatcher] with a
+	/// custom transform.
+	///
+	/// [TxCatcher]: struct.TxCatcher.html
+	pub fn build_tx<T, Tx: NeedsBytes>(self, source: T, transform: Tx) -> Result<TxCatcher<T, Tx>> {
+		TxCatcher::with_tx(source, transform, Some(self))
 	}
 }
 

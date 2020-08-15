@@ -42,11 +42,11 @@ async fn spawn_finalise(fin: Finaliser) {
 		input.push(i as u8);
 	}
 
-	let mut cfg = Config::new();
+	let mut catcher = Config::new()
+		.spawn_finaliser(fin)
+		.build(Cursor::new(input.clone()))
+		.unwrap();
 
-	cfg.spawn_finaliser(fin);
-
-	let mut catcher = Catcher::new(Cursor::new(input.clone()));
 	let mut space = vec![0u8; input.len() + 1];
 	let mut read_in = 0;
 

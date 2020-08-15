@@ -1,5 +1,5 @@
 use crate::{
-	cell::UnsafeCell,
+	cell::{UnsafeCell, UntrackedUnsafeCell},
 	sync::{Arc, AtomicUsize, Mutex, Ordering},
 	thread::JoinHandle,
 	*,
@@ -23,6 +23,10 @@ use std::{
 pub type Catcher<T> = TxCatcher<T, Identity>;
 
 /// Allows an input bytestream to be modified before it is stored.
+///
+/// Must be implemented alongside [NeedsBytes] in a functional transform.
+///
+/// [NeedsBytes]: trait.NeedsBytes.html
 pub trait Transform<TInput: Read> {
 	/// Data transform, given access to the underlying `Read` object and the destination buffer.
 	///
@@ -69,11 +73,15 @@ impl<T, Tx> TxCatcher<T, Tx>
 where
 	Tx: NeedsBytes + Default,
 {
+	/// Create a new stream buffer using the default transform and
+	/// configuration.`
 	pub fn new(source: T) -> Self {
 		Self::with_tx(source, Default::default(), None)
 			.expect("Default config should be guaranteed valid")
 	}
 
+	/// Create a new stream buffer using the default transform and
+	/// a custom configuration.`
 	pub fn with_config(source: T, config: Config) -> Result<Self> {
 		Self::with_tx(source, Default::default(), Some(config))
 	}
@@ -83,6 +91,8 @@ impl<T, Tx> TxCatcher<T, Tx>
 where
 	Tx: NeedsBytes,
 {
+	/// Create a new stream buffer using a custom transform and
+	/// configuration.`
 	pub fn with_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
 		RawStore::new(source, transform, config).map(|c| Self {
 			core: Arc::new(SharedStore {
@@ -132,6 +142,11 @@ impl<T, Tx> TxCatcher<T, Tx> {
 	/// Returns whether any bytes have been stored from the transformed source.
 	pub fn is_empty(&self) -> bool {
 		self.len() == 0
+	}
+
+	/// Returns a builder object to configure and connstruct a cache.
+	pub fn builder() -> Config {
+		Default::default()
 	}
 }
 
@@ -303,10 +318,6 @@ where
 
 		if config.chunk_size < min_bytes {
 			return Err(CatcherError::ChunkSize);
-		};
-
-		if !config.spawn_finaliser.is_sync() {
-			return Err(CatcherError::IllegalFinaliser);
 		};
 
 		let mut start_size = if let Some(length) = config.length_hint {
@@ -794,28 +805,4 @@ impl<R: Read + Sized> ReadSkipExt for R {
 #[cfg(test)]
 mod tests {
 	use crate::*;
-
-	#[cfg(all(
-		feature = "async",
-		feature = "smol-compat",
-		feature = "tokio-compat",
-		feature = "async-std-compat"
-	))]
-	#[test]
-	fn only_sync_finalisers() {
-		const INPUT: [u8; 1] = [0];
-
-		use Finaliser::*;
-		let mut illegals = vec![AsyncStd, Tokio, Smol];
-
-		for fin in illegals.drain(0..) {
-			let mut cfg = Config::new();
-
-			cfg.spawn_finaliser(fin);
-
-			let catcher = Catcher::with_config(&INPUT[..], cfg);
-
-			assert!(matches!(catcher, Err(CatcherError::IllegalFinaliser)));
-		}
-	}
 }

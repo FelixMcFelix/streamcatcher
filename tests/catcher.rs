@@ -21,10 +21,10 @@ fn identity() {
 fn finalises() {
 	const INPUT: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-	let mut cfg = Config::new();
-	cfg.spawn_finaliser(Finaliser::InPlace);
-
-	let mut catcher = Catcher::with_config(&INPUT[..], cfg).unwrap();
+	let mut catcher = Config::new()
+		.spawn_finaliser(Finaliser::InPlace)
+		.build(&INPUT[..])
+		.unwrap();
 
 	catcher.load_all();
 
@@ -140,10 +140,10 @@ fn shared_access() {
 	}
 	let input: &'static _ = Box::leak(perma_array);
 
-	let mut cfg = Config::new();
-	cfg.spawn_finaliser(Finaliser::InPlace);
-
-	let catcher = Catcher::with_config(&input[..], cfg).unwrap();
+	let mut catcher = Config::new()
+		.spawn_finaliser(Finaliser::InPlace)
+		.build(&input[..])
+		.unwrap();
 
 	//
 
