@@ -267,14 +267,14 @@ where
 		let config = config.unwrap_or_else(Default::default);
 		let min_bytes = transform.min_bytes_required();
 
-		if config.chunk_size < min_bytes {
+		if config.chunk_size.lower_bound() < min_bytes {
 			return Err(CatcherError::ChunkSize);
 		};
 
 		let mut start_size = if let Some(length) = config.length_hint {
 			length
 		} else {
-			config.chunk_size
+			config.chunk_size.lower_bound()
 		};
 
 		if start_size < min_bytes {
@@ -685,6 +685,8 @@ where
 					.as_mut()
 					.expect("Writes should only occur while the rope exists.");
 
+				let chunk_count = rope.len();
+
 				let rope_el = rope
 					.back_mut()
 					.expect("There will always be at least one element in rope.");
@@ -698,7 +700,10 @@ where
 				if space < minimum_to_write {
 					let end = rope_el.end_pos;
 					// Make a new chunk!
-					rope.push_back(BufferChunk::new(end, self.config.chunk_size));
+					rope.push_back(BufferChunk::new(
+						end,
+						self.config.next_chunk_size(cap, chunk_count),
+					));
 
 					false
 				} else {

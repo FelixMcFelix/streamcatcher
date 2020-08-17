@@ -393,6 +393,8 @@ where
 					.as_mut()
 					.expect("Writes should only occur while the rope exists.");
 
+				let chunk_count = rope.len();
+
 				let rope_el = rope
 					.back_mut()
 					.expect("There will always be at least one element in rope.");
@@ -406,7 +408,10 @@ where
 				if space < minimum_to_write {
 					let end = rope_el.end_pos;
 					// Make a new chunk!
-					rope.push_back(BufferChunk::new(end, self.config.chunk_size));
+					rope.push_back(BufferChunk::new(
+						end,
+						self.config.next_chunk_size(cap, chunk_count),
+					));
 
 					false
 				} else {

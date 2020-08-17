@@ -126,7 +126,7 @@ impl std::fmt::Display for CatcherError {
 
 impl Error for CatcherError {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Method to allocate a new contiguous backing store, if required by
 /// [`Config::use_backing`].
 ///
@@ -178,10 +178,35 @@ impl Finaliser {
 	}
 }
 
-#[derive(Clone, Debug)]
+/// Growth pattern for allocating new chunks as the rope expands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GrowthStrategy {
+	/// Every new chunk will have the same size.
+	Constant(usize),
+
+	/// Every new chunk will be one initial-chunk-size larger than the last,
+	/// given some start and maximum.
+	Linear { start: usize, max: usize },
+
+	/// Every new chunk will be twice as large as the last, given some start and maximum.
+	Geometric { start: usize, max: usize },
+}
+
+impl GrowthStrategy {
+	pub fn lower_bound(self) -> usize {
+		use GrowthStrategy::*;
+		match self {
+			Constant(a) => a,
+			Linear { start, .. } => start,
+			Geometric { start, .. } => start,
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Options controlling backing store allocation, finalisation, and so on.
 pub struct Config {
-	pub chunk_size: usize,
+	pub chunk_size: GrowthStrategy,
 	pub spawn_finaliser: Finaliser,
 	pub use_backing: bool,
 	pub length_hint: Option<usize>,
@@ -191,7 +216,7 @@ pub struct Config {
 impl Config {
 	pub fn new() -> Self {
 		Self {
-			chunk_size: 4096,
+			chunk_size: GrowthStrategy::Constant(4096),
 			spawn_finaliser: Finaliser::NewThread,
 			use_backing: true,
 			length_hint: None,
@@ -205,8 +230,8 @@ impl Config {
 	/// A larger value is generally preferred for minimising locking and allocations,
 	/// but may reserve too much space before the struct is finalised.
 	///
-	/// *Defaults to `4096`. Must be larger than the transform's minimum chunk size.*
-	pub fn chunk_size(mut self, size: usize) -> Self {
+	/// *Defaults to `Constant(4096)`. Start be larger than the transform's minimum chunk size.*
+	pub fn chunk_size(mut self, size: GrowthStrategy) -> Self {
 		self.chunk_size = size;
 		self
 	}
@@ -266,6 +291,30 @@ impl Config {
 	/// [TxCatcher]: struct.TxCatcher.html
 	pub fn build_tx<T, Tx: NeedsBytes>(self, source: T, transform: Tx) -> Result<TxCatcher<T, Tx>> {
 		TxCatcher::with_tx(source, transform, Some(self))
+	}
+
+	pub(crate) fn next_chunk_size(&self, last_chunk_size: usize, chunk_count: usize) -> usize {
+		let first_is_special = self.length_hint.is_some();
+
+		use GrowthStrategy::*;
+		match self.chunk_size {
+			Constant(a) => a,
+			Linear { start, max } =>
+				if first_is_special && chunk_count == 1 {
+					start
+				} else {
+					max.min(start + last_chunk_size)
+				},
+			Geometric { start, max } =>
+				if first_is_special && chunk_count == 1 {
+					start
+				} else {
+					last_chunk_size
+						.checked_shl(1)
+						.map(|v| max.min(v))
+						.unwrap_or(max)
+				},
+		}
 	}
 }
 
@@ -406,5 +455,24 @@ mod tests {
 		assert_eq!(INIT_USERS.holders().0, INIT_USERS);
 		assert_eq!(u1.holders().0, INIT_USERS);
 		assert_eq!(u2.holders().0, INIT_USERS);
+	}
+
+	#[test]
+	fn allocation_strategies() {
+		let linear_cfg = Config::new()
+			.chunk_size(GrowthStrategy::Linear{start:4096, max: 16_384});
+
+		assert_eq!(linear_cfg.next_chunk_size(4096, 1), 8192);
+		assert_eq!(linear_cfg.next_chunk_size(8192, 2), 12_288);
+		assert_eq!(linear_cfg.next_chunk_size(12_288, 3), 16_384);
+		assert_eq!(linear_cfg.next_chunk_size(16_384, 4), 16_384);
+
+		let geom_cfg = Config::new()
+			.chunk_size(GrowthStrategy::Geometric{start:4096, max: 32_768});
+
+		assert_eq!(geom_cfg.next_chunk_size(4096, 1), 8192);
+		assert_eq!(geom_cfg.next_chunk_size(8192, 2), 16_384);
+		assert_eq!(geom_cfg.next_chunk_size(16_384, 3), 32_768);
+		assert_eq!(geom_cfg.next_chunk_size(32_768, 4), 32_768);
 	}
 }

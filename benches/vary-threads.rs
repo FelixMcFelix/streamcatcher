@@ -76,20 +76,19 @@ pub fn size_known(c: &mut Criterion) {
 	}
 	let input: &'static _ = Box::leak(perma_array);
 
-	let mut cfg = Config::new();
-	cfg.length_hint(Some(10_000_000));
+	let cfg = Config::new().length_hint(Some(10_000_000));
 
 	let mut group =
 		c.benchmark_group("Concurrent Reader Count (10MB, in-memory, size hint correct)");
 	for i in (1..102).step_by(20) {
-		// let c = cfg.clone();
+		let c = cfg.clone();
 		group.bench_with_input(BenchmarkId::new("Naive", i), &i, move |b, i| {
 			let src = black_box(NaiveSharedRead::new(&input[..]));
 			read_to_end(b, *i, src);
 		});
 		group.bench_with_input(BenchmarkId::new("Streamcatcher", i), &i, |b, i| {
 			let c = cfg.clone();
-			let src = black_box(Catcher::with_config(&input[..], c).unwrap());
+			let src = black_box(c.build(&input[..]).unwrap());
 			read_to_end(b, *i, src);
 		});
 	}
@@ -106,9 +105,10 @@ pub fn prefinalised(c: &mut Criterion) {
 
 	let shared_naive = NaiveSharedRead::new(&input[..]);
 
-	let mut cfg = Config::new();
-	cfg.spawn_finaliser(Finaliser::InPlace);
-	let shared_catcher = Catcher::with_config(&input[..], cfg).unwrap();
+	let shared_catcher = Config::new()
+		.spawn_finaliser(Finaliser::InPlace)
+		.build(&input[..])
+		.unwrap();
 
 	shared_catcher.clone().skip(10_000_000);
 	shared_naive.clone().skip(10_000_000);

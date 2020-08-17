@@ -59,6 +59,10 @@ name = "async"
 required-features = ["async-std-compat", "smol-compat", "tokio-compat"]
 
 [[bench]]
+name = "allocs"
+harness = false
+
+[[bench]]
 name = "vary-threads"
 harness = false
 
