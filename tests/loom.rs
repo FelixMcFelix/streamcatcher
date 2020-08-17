@@ -39,10 +39,10 @@ mod safety {
 			}
 			let input: &'static _ = Box::leak(perma_array);
 
-			let mut cfg = Config::new();
-			cfg.spawn_finaliser(Finaliser::InPlace);
-
-			let catcher = Catcher::with_config(&input[..], cfg).unwrap();
+			let catcher = Config::new()
+				.spawn_finaliser(Finaliser::InPlace)
+				.build(&input[..])
+				.unwrap();
 
 			let mut handles = Vec::with_capacity(2);
 

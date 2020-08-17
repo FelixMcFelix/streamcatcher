@@ -9,8 +9,8 @@ pub(crate) mod cell {
 	pub(crate) struct UntrackedUnsafeCell<T>(std::cell::UnsafeCell<T>);
 
 	impl<T> UntrackedUnsafeCell<T> {
-		pub(crate) fn new(data: T) -> UnsafeCell<T> {
-			UnsafeCell(std::cell::UnsafeCell::new(data))
+		pub(crate) fn new(data: T) -> UntrackedUnsafeCell<T> {
+			Self(std::cell::UnsafeCell::new(data))
 		}
 
 		pub(crate) fn with<R>(&self, f: impl FnOnce(*const T) -> R) -> R {

@@ -22,7 +22,7 @@ cargo test --all-features
 [Loom]-based tests take too long as GitHub actions, and must be manually checked if core atomic/locking logic changes.
 
 ```sh
-RUSTFLAGS="--cfg loom --cfg loom_nightly" cargo +nightly test --all-features safety
+RUSTFLAGS="--cfg loom --cfg loom_nightly" cargo +nightly test --release safety
 ```
 
 ### Formatting
