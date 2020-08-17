@@ -60,17 +60,6 @@ where
 	}
 }
 
-impl<T, Tx> Stateful for SharedStore<T, Tx>
-where
-	Tx: Stateful,
-{
-	type State = <Tx as Stateful>::State;
-
-	fn state(&self) -> Self::State {
-		self.raw.with(|ptr| (unsafe { &*ptr }).state())
-	}
-}
-
 impl<T, Tx> Stateful for RawStore<T, Tx>
 where
 	Tx: Stateful,
@@ -78,6 +67,6 @@ where
 	type State = <Tx as Stateful>::State;
 
 	fn state(&self) -> Self::State {
-		self.transform.state()
+		self.transform.with(|ptr| (unsafe { &*ptr }).state())
 	}
 }

@@ -134,7 +134,7 @@ where
 			|(bytes_read, should_finalise_here)| {
 				if should_finalise_here {
 					let handle = self.core.clone();
-					match self.core.finaliser() {
+					match self.core.config.spawn_finaliser {
 						Finaliser::InPlace => unreachable!(),
 						Finaliser::NewThread => {
 							std::thread::spawn(move || handle.do_finalise());
@@ -250,22 +250,6 @@ where
 // 	}
 // }
 
-impl<T, Tx> SharedStore<T, Tx>
-where
-	T: AsyncRead + Unpin,
-	Tx: AsyncTransform<T> + Unpin,
-{
-	fn read_from_pos_async(
-		&self,
-		pos: usize,
-		cx: &mut Context,
-		buf: &mut [u8],
-	) -> Poll<(IoResult<usize>, bool)> {
-		self.raw
-			.with_mut(|ptr| (unsafe { &mut *ptr }).read_from_pos_async(pos, cx, buf))
-	}
-}
-
 impl<T, Tx> RawStore<T, Tx>
 where
 	T: AsyncRead + Unpin,
@@ -273,7 +257,7 @@ where
 {
 	/// Returns read count, should_upgrade, should_finalise_external
 	fn read_from_pos_async(
-		&mut self,
+		&self,
 		pos: usize,
 		cx: &mut Context,
 		buf: &mut [u8],
@@ -307,7 +291,7 @@ where
 				if remaining_in_store == 0 {
 					// Need to do this to trigger the lock
 					// while holding mutability to the other members.
-					let lock: *mut Mutex<()> = &mut self.lock;
+					let lock: *const Mutex<()> = &self.lock;
 					let mut guard = unsafe {
 						let lock = &*lock;
 						lock.lock()
@@ -383,11 +367,13 @@ where
 	// * modifying len
 	// * modifying encoder state
 	fn fill_from_source_async(
-		&mut self,
+		&self,
 		cx: &mut Context,
 		mut bytes_needed: usize,
 	) -> Poll<IoResult<(usize, bool)>> {
-		let minimum_to_write = self.transform.min_bytes_required();
+		let minimum_to_write = self
+			.transform
+			.with(|ptr| unsafe { &*ptr }.min_bytes_required());
 
 		let overspill = bytes_needed % self.config.read_burst_len;
 		if overspill != 0 {
@@ -402,69 +388,78 @@ where
 		let mut progress_before_pending = false;
 
 		loop {
-			let rope = self
-				.rope
-				.as_mut()
-				.expect("Writes should only occur while the rope exists.");
-
-			let rope_el = rope
-				.back_mut()
-				.expect("There will always be at least one element in rope.");
-
-			let old_len = rope_el.data.len();
-			let cap = rope_el.data.capacity();
-			let space = cap - old_len;
-
-			let new_len = old_len + space.min(remaining_bytes);
-
-			if space < minimum_to_write {
-				let end = rope_el.end_pos;
-				// Make a new chunk!
-				rope.push_back(BufferChunk::new(end, self.config.chunk_size));
-			} else {
-				rope_el.data.resize(new_len, 0);
-
-				let src = self
-					.source
+			let should_break = self.rope.with_mut(|ptr| {
+				let rope = unsafe { &mut *ptr }
 					.as_mut()
-					.expect("Source must exist while not finalised.");
+					.expect("Writes should only occur while the rope exists.");
 
-				if let Poll::Ready(pos) = self.transform.transform_poll_read(
-					Pin::new(src),
-					cx,
-					&mut rope_el.data[old_len..],
-				) {
-					progress_before_pending = true;
+				let rope_el = rope
+					.back_mut()
+					.expect("There will always be at least one element in rope.");
 
-					match pos {
-						Ok(TransformPosition::Read(len)) => {
-							rope_el.end_pos += len;
-							rope_el.data.truncate(old_len + len);
+				let old_len = rope_el.data.len();
+				let cap = rope_el.data.capacity();
+				let space = cap - old_len;
 
-							remaining_bytes -= len;
-							self.len.fetch_add(len, Ordering::Release);
-						},
-						Ok(TransformPosition::Finished) => {
-							spawn_new_finaliser = self.finalise();
-						},
-						Err(e) if e.kind() == IoErrorKind::Interrupted => {
-							// DO nothing, so try again.
-						},
-						Err(e) => {
-							recorded_error = Some(Err(e));
-						},
-					}
+				let new_len = old_len + space.min(remaining_bytes);
+
+				if space < minimum_to_write {
+					let end = rope_el.end_pos;
+					// Make a new chunk!
+					rope.push_back(BufferChunk::new(end, self.config.chunk_size));
+
+					false
 				} else {
-					// Pending
-					break;
-				}
+					rope_el.data.resize(new_len, 0);
 
-				if self.finalised().is_source_finished()
-					|| remaining_bytes < minimum_to_write
-					|| recorded_error.is_some()
-				{
-					break;
+					let poll = self.transform.with_mut(|tx_ptr| {
+						self.source.with_mut(|src_ptr| {
+							let src = unsafe { &mut *src_ptr }
+								.as_mut()
+								.expect("Source must exist while not finalised.");
+
+							unsafe { &mut *tx_ptr }.transform_poll_read(
+								Pin::new(src),
+								cx,
+								&mut rope_el.data[old_len..],
+							)
+						})
+					});
+
+					if let Poll::Ready(pos) = poll {
+						progress_before_pending = true;
+
+						match pos {
+							Ok(TransformPosition::Read(len)) => {
+								rope_el.end_pos += len;
+								rope_el.data.truncate(old_len + len);
+
+								remaining_bytes -= len;
+								self.len.fetch_add(len, Ordering::Release);
+							},
+							Ok(TransformPosition::Finished) => {
+								spawn_new_finaliser = self.finalise();
+							},
+							Err(e) if e.kind() == IoErrorKind::Interrupted => {
+								// DO nothing, so try again.
+							},
+							Err(e) => {
+								recorded_error = Some(Err(e));
+							},
+						}
+
+						self.finalised().is_source_finished()
+							|| remaining_bytes < minimum_to_write
+							|| recorded_error.is_some()
+					} else {
+						// Pending
+						true
+					}
 				}
+			});
+
+			if should_break {
+				break;
 			}
 		}
 

@@ -65,7 +65,7 @@ impl NeedsBytes for Identity {}
 #[derive(Clone, Debug)]
 /// A shared stream buffer, using an applied input data transform.
 pub struct TxCatcher<T, Tx> {
-	pub(crate) core: Arc<SharedStore<T, Tx>>,
+	pub(crate) core: Arc<RawStore<T, Tx>>,
 	pub(crate) pos: usize,
 }
 
@@ -95,9 +95,7 @@ where
 	/// configuration.`
 	pub fn with_tx(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
 		RawStore::new(source, transform, config).map(|c| Self {
-			core: Arc::new(SharedStore {
-				raw: UnsafeCell::new(c),
-			}),
+			core: Arc::new(c),
 			pos: 0,
 		})
 	}
@@ -244,67 +242,20 @@ where
 	}
 }
 
-#[derive(Debug)]
-pub(crate) struct SharedStore<T, Tx> {
-	pub(crate) raw: UnsafeCell<RawStore<T, Tx>>,
-}
-
-impl<T, Tx> SharedStore<T, Tx> {
-	// The main reason for employing `unsafe` here is *shared mutability*:
-	// due to the granularity of the locks we need, (i.e., a moving critical
-	// section otherwise lock-free), we need to assert that these operations
-	// are safe.
-	//
-	// Note that only our code can use this, so that we can ensure correctness
-	// and concurrent safety.
-	pub(crate) fn len(&self) -> usize {
-		self.raw.with(|ptr| (unsafe { &*ptr }).len())
-	}
-
-	pub(crate) fn is_finished(&self) -> bool {
-		self.raw
-			.with(|ptr| (unsafe { &*ptr }).finalised().is_source_finished())
-	}
-
-	pub(crate) fn is_finalised(&self) -> bool {
-		self.raw
-			.with(|ptr| (unsafe { &*ptr }).finalised().is_backing_ready())
-	}
-
-	pub(crate) fn do_finalise(&self) {
-		self.raw
-			.with_mut(|ptr| (unsafe { &mut *ptr }).do_finalise())
-	}
-
-	pub(crate) fn finaliser(&self) -> Finaliser {
-		self.raw
-			.with(|ptr| (unsafe { &*ptr }).config.spawn_finaliser.clone())
-	}
-}
-
-impl<T, Tx> SharedStore<T, Tx>
-where
-	T: Read,
-	Tx: Transform<T> + NeedsBytes,
-{
-	fn read_from_pos(&self, pos: usize, buffer: &mut [u8]) -> (IoResult<usize>, bool) {
-		self.raw
-			.with_mut(|ptr| (unsafe { &mut *ptr }).read_from_pos(pos, buffer))
-	}
-}
-
 // Shared basis for the below cache-based seekables.
 #[derive(Debug)]
 pub(crate) struct RawStore<T, Tx> {
 	pub(crate) config: Config,
-	pub(crate) transform: Tx,
-	pub(crate) source: Option<T>,
+	pub(crate) transform: UnsafeCell<Tx>,
+	pub(crate) source: UnsafeCell<Option<T>>,
 
 	pub(crate) lock: Mutex<()>,
 	pub(crate) rope_users_and_state: AtomicUsize,
 
-	pub(crate) backing_store: Option<Vec<u8>>,
-	pub(crate) rope: Option<LinkedList<BufferChunk>>,
+	// Can't easily track this due to std data structure.
+	// Maybe intrusive could manage this better?
+	pub(crate) rope: UntrackedUnsafeCell<Option<LinkedList<BufferChunk>>>,
+	pub(crate) backing_store: UnsafeCell<Option<Vec<u8>>>,
 	pub(crate) len: AtomicUsize,
 }
 
@@ -338,12 +289,12 @@ where
 
 			len: Default::default(),
 
-			transform,
+			transform: UnsafeCell::new(transform),
 
-			source: Some(source),
+			source: UnsafeCell::new(Some(source)),
 
-			backing_store: None,
-			rope: Some(list),
+			backing_store: UnsafeCell::new(None),
+			rope: UntrackedUnsafeCell::new(Some(list)),
 			rope_users_and_state: AtomicUsize::new(0),
 			lock: Mutex::new(()),
 		})
@@ -359,11 +310,19 @@ impl<T, Tx> RawStore<T, Tx> {
 		self.rope_users_and_state.load(Ordering::Acquire).state()
 	}
 
+	pub(crate) fn is_finalised(&self) -> bool {
+		self.finalised() == FinaliseState::Finalised
+	}
+
+	pub(crate) fn is_finished(&self) -> bool {
+		self.finalised() != FinaliseState::Live
+	}
+
 	/// Marks stream as finished.
 	///
 	/// Returns `true` if a new handle must be spawned by the parent
 	/// to finalise in another thread.
-	pub(crate) fn finalise(&mut self) -> bool {
+	pub(crate) fn finalise(&self) -> bool {
 		let state_on_call = self.upgrade_state(Ordering::AcqRel).state();
 
 		if state_on_call.is_source_live() {
@@ -378,65 +337,67 @@ impl<T, Tx> RawStore<T, Tx> {
 		}
 	}
 
-	pub(crate) fn do_finalise(&mut self) {
+	pub(crate) fn do_finalise(&self) {
 		if !self.config.use_backing {
 			// If we don't want to use backing, then still remove the source.
 			// This state will prevent anyone from trying to use the backing store.
-			self.source = None;
+			self.source.with_mut(|ptr| *(unsafe { &mut *ptr }) = None);
 			return;
 		}
 
 		let backing_len = self.len();
 
-		// Move the rope of bytes into the backing store.
-		let rope = self
-			.rope
-			.as_mut()
-			.expect("Writes should only occur while the rope exists.");
+		self.rope.with_mut(|ptr| {
+			// Move the rope of bytes into the backing store.
+			let rope = (unsafe { &mut *ptr })
+				.as_mut()
+				.expect("Finalisation should only occur while the rope exists.");
 
-		if rope.len() > 1 {
-			// Allocate one big store, then start moving entries over
-			// chunk-by-chunk.
-			let mut back = vec![0u8; backing_len];
+			if rope.len() > 1 {
+				// Allocate one big store, then start moving entries over
+				// chunk-by-chunk.
+				let mut back = vec![0u8; backing_len];
 
-			for el in rope.iter() {
-				let start = el.start_pos;
-				let end = el.end_pos;
-				back[start..end].copy_from_slice(&el.data[..end - start]);
+				for el in rope.iter() {
+					let start = el.start_pos;
+					let end = el.end_pos;
+					back[start..end].copy_from_slice(&el.data[..end - start]);
+				}
+
+				// Insert the new backing store, but DO NOT purge the old.
+				// This is left to the last Arc<> holder of the rope.
+				self.backing_store
+					.with_mut(move |ptr| *(unsafe { &mut *ptr }) = Some(back));
+			} else {
+				// Least work, but unsafe.
+				// We move the first chunk's buffer to become the backing store,
+				// temporarily aliasing it until the list is destroyed.
+				// In this case, when the list is destroyed, the first element
+				// MUST be leaked to keep the backing store memory valid.
+				//
+				// (see remove_rope for this leakage)
+				//
+				// The alternative (write first chunk into always-present
+				// backing store) mandates a lock for the final expansion, because
+				// the backing store is IN USE. Thus, we can't employ it.
+				if let Some(el) = rope.front_mut() {
+					// We can be certain that this pointer is not invalidated because:
+					// * All writes to the rope/rope are finished. Thus, no
+					//   reallocations/moves.
+					// * The Vec will live exactly as long as the RawStore, pointer never escapes.
+					// Likewise, we knoe that it is safe to build the new vector as:
+					// * The stored type and pointer do not change, so alignment is preserved.
+					// * The data pointer is created by an existing Vec<T>.
+					self.backing_store.with_mut(move |ptr| unsafe {
+						let data = el.data.as_mut_ptr();
+						*ptr = Some(Vec::from_raw_parts(data, el.data.len(), el.data.capacity()))
+					});
+				}
 			}
-
-			// Insert the new backing store, but DO NOT purge the old.
-			// This is left to the last Arc<> holder of the rope.
-			self.backing_store = Some(back);
-		} else {
-			// Least work, but unsafe.
-			// We move the first chunk's buffer to become the backing store,
-			// temporarily aliasing it until the list is destroyed.
-			// In this case, when the list is destroyed, the first element
-			// MUST be leaked to keep the backing store memory valid.
-			//
-			// (see remove_rope for this leakage)
-			//
-			// The alternative (write first chunk into always-present
-			// backing store) mandates a lock for the final expansion, because
-			// the backing store is IN USE. Thus, we can't employ it.
-			if let Some(el) = rope.front_mut() {
-				// We can be certain that this pointer is not invalidated because:
-				// * All writes to the rope/rope are finished. Thus, no
-				//   reallocations/moves.
-				// * The Vec will live exactly as long as the RawStore, pointer never escapes.
-				// Likewise, we knoe that it is safe to build the new vector as:
-				// * The stored type and pointer do not change, so alignment is preserved.
-				// * The data pointer is created by an existing Vec<T>.
-				self.backing_store = Some(unsafe {
-					let data = el.data.as_mut_ptr();
-					Vec::from_raw_parts(data, el.data.len(), el.data.capacity())
-				})
-			}
-		}
+		});
 
 		// Drop the old input.
-		self.source = None;
+		self.source.with_mut(|ptr| *(unsafe { &mut *ptr }) = None);
 
 		// It's crucial that we do this *last*, as this is the signal
 		// for other threads to migrate from rope to backing store.
@@ -448,15 +409,15 @@ impl<T, Tx> RawStore<T, Tx> {
 			.fetch_add(1 << usize::SHIFT_AMT, order)
 	}
 
-	pub(crate) fn add_rope(&mut self) -> usize {
+	pub(crate) fn add_rope(&self) -> usize {
 		self.rope_users_and_state.fetch_add(1, Ordering::AcqRel)
 	}
 
-	pub(crate) fn remove_rope(&mut self) -> usize {
+	pub(crate) fn remove_rope(&self) -> usize {
 		self.rope_users_and_state.fetch_sub(1, Ordering::AcqRel)
 	}
 
-	pub(crate) fn remove_rope_full(&mut self) {
+	pub(crate) fn remove_rope_full(&self) {
 		// We can only remove the rope if the core holds the last reference.
 		// Given that the number of active handles at this moment is returned,
 		// we also know the amount *after* subtraction.
@@ -469,7 +430,7 @@ impl<T, Tx> RawStore<T, Tx> {
 		}
 	}
 
-	pub(crate) fn try_delete_rope(&mut self, seen_count: Holders<usize>) {
+	pub(crate) fn try_delete_rope(&self, seen_count: Holders<usize>) {
 		// This branch will only be visited if BOTH the rope and
 		// backing store exist simultaneously.
 		if seen_count.0 == 0 {
@@ -480,27 +441,32 @@ impl<T, Tx> RawStore<T, Tx> {
 			if maybe_lock.is_none() {
 				return;
 			}
-			if let Some(rope) = &mut self.rope {
-				// Prevent the backing store from being wiped out
-				// if the first link in the rope sufficed.
-				// This ensures safety as we undo the aliasing
-				// in the above special case.
-				if rope.len() == 1 {
-					let el = rope
-						.pop_front()
-						.expect("Length of rope was established as >= 1.");
-					ManuallyDrop::new(el.data);
-				}
-			}
 
-			// Drop everything else.
-			self.rope = None;
+			self.rope.with_mut(|ptr| {
+				let rope_access = unsafe { &mut *ptr };
+
+				if let Some(rope) = rope_access {
+					// Prevent the backing store from being wiped out
+					// if the first link in the rope sufficed.
+					// This ensures safety as we undo the aliasing
+					// in the above special case.
+					if rope.len() == 1 {
+						let el = rope
+							.pop_front()
+							.expect("Length of rope was established as >= 1.");
+						ManuallyDrop::new(el.data);
+					}
+				}
+
+				// Drop everything else.
+				*rope_access = None;
+			});
 		}
 	}
 
 	// Note: if you get a Rope, you need to later call remove_rope to remain sound.
 	// This call has the side effect of trying to safely delete the rope.
-	pub(crate) fn get_location(&mut self) -> (CacheReadLocation, FinaliseState) {
+	pub(crate) fn get_location(&self) -> (CacheReadLocation, FinaliseState) {
 		let info_before = self.add_rope();
 		let finalised = info_before.state();
 
@@ -529,55 +495,57 @@ impl<T, Tx> RawStore<T, Tx> {
 	) -> usize {
 		use CacheReadLocation::*;
 		match loc {
-			Backed => {
-				let store = self
-					.backing_store
-					.as_ref()
-					.expect("Reader should not attempt to use a backing store before it exists");
-
+			Backed =>
 				if pos < self.len() {
-					buf[..count].copy_from_slice(&store[pos..pos + count]);
+					self.backing_store.with(|ptr| {
+						let store = unsafe { &*ptr }.as_ref().expect(
+							"Reader should not attempt to use a backing store before it exists",
+						);
 
-					count
+						buf[..count].copy_from_slice(&store[pos..pos + count]);
+
+						count
+					})
 				} else {
 					0
-				}
-			},
+				},
 			Roped => {
-				let rope = self.rope.as_ref().expect(
-					"Rope should still exist while any handles hold a ::Roped(_) \
-							 (and thus an Arc)",
-				);
+				self.rope.with(|ptr| {
+					let rope = unsafe { &*ptr }.as_ref().expect(
+						"Rope should still exist while any handles hold a ::Roped(_) \
+									 (and thus an Arc)",
+					);
 
-				let mut written = 0;
+					let mut written = 0;
 
-				for link in rope.iter() {
-					// Although this isn't atomic, Release on store to .len ensures that
-					// all writes made before setting len STAY before len.
-					// backing_pos might be larger than len, and fluctuates
-					// due to resizes, BUT we're gated by the atomically written len,
-					// via count, which gives us a safe bound on accessible bytes this call.
-					if pos >= link.start_pos && pos < link.end_pos {
-						let local_available = link.end_pos - pos;
-						let to_write = (count - written).min(local_available);
+					for link in rope.iter() {
+						// Although this isn't atomic, Release on store to .len ensures that
+						// all writes made before setting len STAY before len.
+						// backing_pos might be larger than len, and fluctuates
+						// due to resizes, BUT we're gated by the atomically written len,
+						// via count, which gives us a safe bound on accessible bytes this call.
+						if pos >= link.start_pos && pos < link.end_pos {
+							let local_available = link.end_pos - pos;
+							let to_write = (count - written).min(local_available);
 
-						let first_el = pos - link.start_pos;
+							let first_el = pos - link.start_pos;
 
-						let next_len = written + to_write;
+							let next_len = written + to_write;
 
-						buf[written..next_len]
-							.copy_from_slice(&link.data[first_el..first_el + to_write]);
+							buf[written..next_len]
+								.copy_from_slice(&link.data[first_el..first_el + to_write]);
 
-						written = next_len;
-						pos += to_write;
+							written = next_len;
+							pos += to_write;
+						}
+
+						if written >= buf.len() {
+							break;
+						}
 					}
 
-					if written >= buf.len() {
-						break;
-					}
-				}
-
-				count
+					count
+				})
 			},
 		}
 	}
@@ -589,7 +557,7 @@ where
 	Tx: Transform<T> + NeedsBytes,
 {
 	/// Returns read count, should_upgrade, should_finalise_external
-	fn read_from_pos(&mut self, pos: usize, buf: &mut [u8]) -> (IoResult<usize>, bool) {
+	fn read_from_pos(&self, pos: usize, buf: &mut [u8]) -> (IoResult<usize>, bool) {
 		// Place read of finalised first to be certain that if we see finalised,
 		// then backing_len *must* be the true length.
 		let (loc, mut finalised) = self.get_location();
@@ -617,7 +585,7 @@ where
 				if remaining_in_store == 0 {
 					// Need to do this to trigger the lock
 					// while holding mutability to the other members.
-					let lock: *mut Mutex<()> = &mut self.lock;
+					let lock: *const Mutex<()> = &self.lock;
 					#[cfg(loom)]
 					let guard = unsafe {
 						let lock = &*lock;
@@ -696,8 +664,10 @@ where
 	// * drawing bytes from the source
 	// * modifying len
 	// * modifying encoder state
-	fn fill_from_source(&mut self, mut bytes_needed: usize) -> IoResult<(usize, bool)> {
-		let minimum_to_write = self.transform.min_bytes_required();
+	fn fill_from_source(&self, mut bytes_needed: usize) -> IoResult<(usize, bool)> {
+		let minimum_to_write = self
+			.transform
+			.with(|ptr| unsafe { &*ptr }.min_bytes_required());
 
 		let overspill = bytes_needed % self.config.read_burst_len;
 		if overspill != 0 {
@@ -710,61 +680,68 @@ where
 		let mut spawn_new_finaliser = false;
 
 		loop {
-			let rope = self
-				.rope
-				.as_mut()
-				.expect("Writes should only occur while the rope exists.");
-
-			let rope_el = rope
-				.back_mut()
-				.expect("There will always be at least one element in rope.");
-
-			let old_len = rope_el.data.len();
-			let cap = rope_el.data.capacity();
-			let space = cap - old_len;
-
-			let new_len = old_len + space.min(remaining_bytes);
-
-			if space < minimum_to_write {
-				let end = rope_el.end_pos;
-				// Make a new chunk!
-				rope.push_back(BufferChunk::new(end, self.config.chunk_size));
-			} else {
-				rope_el.data.resize(new_len, 0);
-
-				let src = self
-					.source
+			let should_break = self.rope.with_mut(|ptr| {
+				let rope = unsafe { &mut *ptr }
 					.as_mut()
-					.expect("Source must exist while not finalised.");
+					.expect("Writes should only occur while the rope exists.");
 
-				let pos = self
-					.transform
-					.transform_read(src, &mut rope_el.data[old_len..]);
-				match pos {
-					Ok(TransformPosition::Read(len)) => {
-						rope_el.end_pos += len;
-						rope_el.data.truncate(old_len + len);
+				let rope_el = rope
+					.back_mut()
+					.expect("There will always be at least one element in rope.");
 
-						remaining_bytes -= len;
-						self.len.fetch_add(len, Ordering::Release);
-					},
-					Ok(TransformPosition::Finished) => {
-						spawn_new_finaliser = self.finalise();
-					},
-					Err(e) if e.kind() == IoErrorKind::Interrupted => {
-						// DO nothing, so try again.
-					},
-					Err(e) => {
-						recorded_error = Some(Err(e));
-					},
+				let old_len = rope_el.data.len();
+				let cap = rope_el.data.capacity();
+				let space = cap - old_len;
+
+				let new_len = old_len + space.min(remaining_bytes);
+
+				if space < minimum_to_write {
+					let end = rope_el.end_pos;
+					// Make a new chunk!
+					rope.push_back(BufferChunk::new(end, self.config.chunk_size));
+
+					false
+				} else {
+					rope_el.data.resize(new_len, 0);
+
+					let pos = self.transform.with_mut(|tx_ptr| {
+						self.source.with_mut(|src_ptr| {
+							let src = unsafe { &mut *src_ptr }
+								.as_mut()
+								.expect("Source must exist while not finalised.");
+
+							unsafe { &mut *tx_ptr }
+								.transform_read(src, &mut rope_el.data[old_len..])
+						})
+					});
+
+					match pos {
+						Ok(TransformPosition::Read(len)) => {
+							rope_el.end_pos += len;
+							rope_el.data.truncate(old_len + len);
+
+							remaining_bytes -= len;
+							self.len.fetch_add(len, Ordering::Release);
+						},
+						Ok(TransformPosition::Finished) => {
+							spawn_new_finaliser = self.finalise();
+						},
+						Err(e) if e.kind() == IoErrorKind::Interrupted => {
+							// DO nothing, so try again.
+						},
+						Err(e) => {
+							recorded_error = Some(Err(e));
+						},
+					}
+
+					self.finalised().is_source_finished()
+						|| remaining_bytes < minimum_to_write
+						|| recorded_error.is_some()
 				}
+			});
 
-				if self.finalised().is_source_finished()
-					|| remaining_bytes < minimum_to_write
-					|| recorded_error.is_some()
-				{
-					break;
-				}
+			if should_break {
+				break;
 			}
 		}
 
@@ -786,8 +763,8 @@ impl<T, Tx> Drop for RawStore<T, Tx> {
 // We need to declare these as thread-safe, since we don't have a mutex around
 // several raw fields. However, the way that they are used should remain
 // consistent.
-unsafe impl<T, Tx> Sync for SharedStore<T, Tx> {}
-unsafe impl<T, Tx> Send for SharedStore<T, Tx> {}
+unsafe impl<T, Tx> Sync for RawStore<T, Tx> {}
+unsafe impl<T, Tx> Send for RawStore<T, Tx> {}
 
 /// Utility trait to scan forward by discarding bytes.
 pub trait ReadSkipExt {
