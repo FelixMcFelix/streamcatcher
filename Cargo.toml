@@ -1,6 +1,6 @@
 [package]
 name = "streamcatcher"
-version = "0.1.0"
+version = "0.0.1"
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/FelixMcFelix/streamcatcher"
 repository = "https://github.com/FelixMcFelix/streamcatcher.git"

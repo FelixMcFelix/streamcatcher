@@ -111,10 +111,10 @@ pub enum TransformPosition {
 /// Streamcatcher configuration errors.
 pub enum CatcherError {
 	/// Returned when the chunk size is smaller than a [`Transform`]'s
-	/// [`minimum required contiguous byte count`].
+	/// [minimum required contiguous byte count].
 	///
 	/// [`Transform`]: trait.Transform.html
-	/// [`minimum required contiguous byte count`]: trait.Transform.html#method.min_bytes_required
+	/// [minimum required contiguous byte count]: trait.Transform.html#method.min_bytes_required
 	ChunkSize,
 }
 
@@ -179,12 +179,25 @@ impl Finaliser {
 }
 
 /// Growth pattern for allocating new chunks as the rope expands.
+///
+/// [`Linear`] and [`Geometric`] greatly reduce allocation count and contention when
+/// readers are highly synchronised, offering significant performance gains and are
+/// recommended when available memory is no limit. However, they run the risk of consuming
+/// significantly more memory than a stream requires—for this reason, [`Constant`]
+/// is the default choice.
+///
+/// If a length hint is provided, the second chunk will have the given start size,
+/// and will grow from that point onwards.
+///
+/// [`Constant`]: #variant.Constant
+/// [`Linear`]: #variant.Linear
+/// [`Geometric`]: #variant.Geometric
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GrowthStrategy {
 	/// Every new chunk will have the same size.
 	Constant(usize),
 
-	/// Every new chunk will be one initial-chunk-size larger than the last,
+	/// Every new chunk will be larger than the last by `start`,
 	/// given some start and maximum.
 	Linear { start: usize, max: usize },
 
