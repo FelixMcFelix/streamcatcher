@@ -459,16 +459,20 @@ mod tests {
 
 	#[test]
 	fn allocation_strategies() {
-		let linear_cfg = Config::new()
-			.chunk_size(GrowthStrategy::Linear{start:4096, max: 16_384});
+		let linear_cfg = Config::new().chunk_size(GrowthStrategy::Linear {
+			start: 4096,
+			max: 16_384,
+		});
 
 		assert_eq!(linear_cfg.next_chunk_size(4096, 1), 8192);
 		assert_eq!(linear_cfg.next_chunk_size(8192, 2), 12_288);
 		assert_eq!(linear_cfg.next_chunk_size(12_288, 3), 16_384);
 		assert_eq!(linear_cfg.next_chunk_size(16_384, 4), 16_384);
 
-		let geom_cfg = Config::new()
-			.chunk_size(GrowthStrategy::Geometric{start:4096, max: 32_768});
+		let geom_cfg = Config::new().chunk_size(GrowthStrategy::Geometric {
+			start: 4096,
+			max: 32_768,
+		});
 
 		assert_eq!(geom_cfg.next_chunk_size(4096, 1), 8192);
 		assert_eq!(geom_cfg.next_chunk_size(8192, 2), 16_384);

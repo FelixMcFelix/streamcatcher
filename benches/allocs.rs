@@ -63,25 +63,37 @@ pub fn default(c: &mut Criterion) {
 		read_to_end(b, THREADS, src);
 	});
 
-	group.bench_function(BenchmarkId::from_parameter("Linear(4096, 64MB)"), move |b| {
-		let src = black_box(
-			Config::new()
-				.chunk_size(GrowthStrategy::Linear{start:4096, max: 64 * 1024 * 1024})
-				.build(&input[..])
-				.unwrap()
-		);
-		read_to_end(b, THREADS, src);
-	});
+	group.bench_function(
+		BenchmarkId::from_parameter("Linear(4096, 64MB)"),
+		move |b| {
+			let src = black_box(
+				Config::new()
+					.chunk_size(GrowthStrategy::Linear {
+						start: 4096,
+						max: 64 * 1024 * 1024,
+					})
+					.build(&input[..])
+					.unwrap(),
+			);
+			read_to_end(b, THREADS, src);
+		},
+	);
 
-	group.bench_function(BenchmarkId::from_parameter("Geometric(4096, 64MB)"), move |b| {
-		let src = black_box(
-			Config::new()
-				.chunk_size(GrowthStrategy::Geometric{start:4096, max: 64 * 1024 * 1024})
-				.build(&input[..])
-				.unwrap()
-		);
-		read_to_end(b, THREADS, src);
-	});
+	group.bench_function(
+		BenchmarkId::from_parameter("Geometric(4096, 64MB)"),
+		move |b| {
+			let src = black_box(
+				Config::new()
+					.chunk_size(GrowthStrategy::Geometric {
+						start: 4096,
+						max: 64 * 1024 * 1024,
+					})
+					.build(&input[..])
+					.unwrap(),
+			);
+			read_to_end(b, THREADS, src);
+		},
+	);
 
 	group.finish();
 }
