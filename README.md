@@ -21,6 +21,7 @@ The main algorithm is outlined in [this blog post], with rope reference tracking
 * Test integration with serenity async voice and Opus encoder Transform.
 * Release blogpost.
 * Trim dependencies (executors, etc.) down to subcrates.
+* BufRead and AsyncBufRead.
 
 ## License
 

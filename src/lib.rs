@@ -108,6 +108,7 @@ pub enum TransformPosition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 /// Streamcatcher configuration errors.
 pub enum CatcherError {
 	/// Returned when the chunk size is smaller than a [`Transform`]'s
