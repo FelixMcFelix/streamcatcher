@@ -62,7 +62,7 @@ impl<T: Read> Transform<T> for Identity {
 
 impl NeedsBytes for Identity {}
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 /// A shared stream buffer, using an applied input data transform.
 pub struct TxCatcher<T, Tx> {
 	pub(crate) core: Arc<RawStore<T, Tx>>,
@@ -168,6 +168,14 @@ where
 		let pos = self.pos;
 		while self.skip(1920 * mem::size_of::<f32>()) > 0 && !self.is_finalised() {}
 		self.pos = pos;
+	}
+}
+
+impl<T, Tx> Clone for TxCatcher<T, Tx> {
+	fn clone(&self) -> Self {
+		let mut out = self.new_handle();
+		out.pos = self.pos;
+		out
 	}
 }
 

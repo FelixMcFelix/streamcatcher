@@ -1,6 +1,8 @@
 //! Support types for `AsyncRead`/`AsyncSeek` compatible stream buffers.
 //! Requires the `"async"` feature.
 use crate::*;
+#[cfg(feature = "tokio-compat")]
+pub use async_compat::Compat;
 use async_trait::async_trait;
 use core::{
 	future::Future,
@@ -17,8 +19,6 @@ use std::{
 	mem,
 	sync::atomic::Ordering,
 };
-#[cfg(feature = "tokio-compat")]
-use tokio::io::{AsyncRead as TokioRead, AsyncSeek as TokioSeek};
 
 /// Async variant of [`Transform`].
 ///
@@ -172,13 +172,9 @@ where
 }
 
 #[cfg(feature = "tokio-compat")]
-impl<T, Tx> TokioRead for TxCatcher<T, Tx>
-where
-	T: AsyncRead + Unpin + 'static,
-	Tx: AsyncTransform<T> + Unpin + 'static,
-{
-	fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut [u8]) -> Poll<IoResult<usize>> {
-		AsyncRead::poll_read(self, cx, buf)
+impl<T, Tx> TxCatcher<T, Tx> {
+	pub fn tokio(self) -> Compat<Self> {
+		Compat::new(self)
 	}
 }
 
@@ -235,20 +231,6 @@ where
 		})
 	}
 }
-
-// #[cfg(feature = "tokio-compat")]
-// impl<T, Tx> TokioSeek for TxCatcher<T, Tx>
-// 	where T: AsyncRead + Unpin + 'static,
-// 		Tx: AsyncTransform<T> + Unpin + 'static,
-// {
-// 	fn poll_seek(
-// 	    mut self: Pin<&mut Self>,
-// 	    cx: &mut Context,
-// 	    pos: SeekFrom,
-// 	) -> Poll<IoResult<usize>> {
-// 		AsyncSeek::poll_seek(self, cx, buf)
-// 	}
-// }
 
 impl<T, Tx> RawStore<T, Tx>
 where
