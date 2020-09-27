@@ -16,13 +16,6 @@ Streamcatcher is designed to allow seeking on otherwise one-way streams (*e.g.*,
 
 The main algorithm is outlined in [this blog post], with rope reference tracking moved to occur only in the core.
 
-## Roadmap to 0.1.0
-* Implement Tokio's AsyncSeek.
-* Test integration with serenity async voice and Opus encoder Transform.
-* Release blogpost.
-* Trim dependencies (executors, etc.) down to subcrates.
-* BufRead and AsyncBufRead.
-
 ## License
 
 Licensed under either of
