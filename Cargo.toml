@@ -1,16 +1,17 @@
 [package]
-name = "streamcatcher"
-version = "0.0.1"
-license = "MIT/Apache-2.0"
-homepage = "https://github.com/FelixMcFelix/streamcatcher"
-repository = "https://github.com/FelixMcFelix/streamcatcher.git"
 authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
-keywords = ["async", "io", "bytes", "concurrent"]
 categories = ["asynchronous", "caching", "concurrency"]
 description = "A thread-safe, shared (asynchronous), almost-lockless stream buffer."
-readme = "README.md"
 documentation = "https://docs.rs/streamcatcher"
 edition = "2018"
+homepage = "https://github.com/FelixMcFelix/streamcatcher"
+include = ["src/**/*.rs", "Cargo.toml"]
+keywords = ["async", "io", "bytes", "concurrent"]
+license = "MIT/Apache-2.0"
+name = "streamcatcher"
+readme = "README.md"
+repository = "https://github.com/FelixMcFelix/streamcatcher.git"
+version = "0.1.0"
 
 [features]
 default = []
@@ -67,14 +68,17 @@ utils = { path = "utils" }
 
 [[test]]
 name = "async"
+path = "tests/async.rs"
 required-features = ["async-std-compat", "smol-compat", "tokio-compat"]
 
 [[bench]]
 name = "allocs"
+path = "benches/allocs.rs"
 harness = false
 
 [[bench]]
 name = "vary-threads"
+path = "benches/vary-threads.rs"
 harness = false
 
 # Misc.
