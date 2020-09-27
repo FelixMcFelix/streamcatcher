@@ -9,7 +9,7 @@ use core::{
 	pin::Pin,
 	task::{Context, Poll},
 };
-use futures::io::{self, AsyncRead, AsyncReadExt, AsyncSeek};
+use futures_util::io::{self, AsyncRead, AsyncReadExt, AsyncSeek};
 use std::{
 	io::{Error as IoError, ErrorKind as IoErrorKind, Result as IoResult, SeekFrom},
 	marker::Unpin,

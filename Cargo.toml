@@ -14,21 +14,22 @@ edition = "2018"
 
 [features]
 default = []
-async = ["async-trait"]
+async = ["async-trait", "futures-util/io"]
 async-std-compat = ["async", "async-std"]
 smol-compat = ["async", "smol"]
 tokio-compat = ["async", "tokio", "async-compat"]
 
 # Dependencies
 [dependencies]
-crossbeam-utils = "0.7"
-futures = "0.3"
+crossbeam-utils = { version = "0.7", features = ["alloc"], default-features = false }
 
 [dependencies.async-compat]
 optional = true
 version = "0.1"
 
 [dependencies.async-std]
+default-features = false
+features = ["alloc"]
 optional = true
 version = "1"
 
@@ -36,11 +37,17 @@ version = "1"
 optional = true
 version = "0.1"
 
+[dependencies.futures-util]
+default-features = false
+features = ["alloc"]
+version = "0.3"
+
 [dependencies.smol]
 optional = true
 version = "0.3"
 
 [dependencies.tokio]
+default-features = false
 features = ["rt-core"]
 optional = true
 version = "0.2"

@@ -37,7 +37,7 @@ pub(crate) mod sync {
 	};
 
 	#[cfg(not(loom))]
-	pub(crate) use futures::lock::Mutex;
+	pub(crate) use futures_util::lock::Mutex;
 
 	#[cfg(loom)]
 	#[derive(Debug)]
