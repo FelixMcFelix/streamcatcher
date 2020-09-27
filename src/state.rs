@@ -24,7 +24,7 @@ pub trait StateAccess {
 	/// Retrieved state could be generated based on an inconsistent or semi-committed
 	/// mutable access to (Async)[`Transform`].
 	///
-	/// To use safely, implementors of [`Stateful`] *must* ensure that appropriate
+	/// To use safely, implementers of [`Stateful`] *must* ensure that appropriate
 	/// concurrency controls are used (*e.g.*, atomics or locks) when producing state
 	/// data.
 	///

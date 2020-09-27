@@ -142,7 +142,7 @@ impl<T, Tx> TxCatcher<T, Tx> {
 		self.len() == 0
 	}
 
-	/// Returns a builder object to configure and connstruct a cache.
+	/// Returns a builder object to configure and construct a cache.
 	pub fn builder() -> Config {
 		Default::default()
 	}
@@ -393,7 +393,7 @@ impl<T, Tx> RawStore<T, Tx> {
 					// * All writes to the rope/rope are finished. Thus, no
 					//   reallocations/moves.
 					// * The Vec will live exactly as long as the RawStore, pointer never escapes.
-					// Likewise, we knoe that it is safe to build the new vector as:
+					// Likewise, we know that it is safe to build the new vector as:
 					// * The stored type and pointer do not change, so alignment is preserved.
 					// * The data pointer is created by an existing Vec<T>.
 					self.backing_store.with_mut(move |ptr| unsafe {
@@ -591,22 +591,10 @@ where
 				let mut remaining_in_store = backing_len - pos - read;
 
 				if remaining_in_store == 0 {
-					// Need to do this to trigger the lock
-					// while holding mutability to the other members.
-					let lock: *const Mutex<()> = &self.lock;
 					#[cfg(loom)]
-					let guard = unsafe {
-						let lock = &*lock;
-
-						#[cfg(loom)]
-						lock.lock()
-					};
+					let guard = self.lock.lock();
 					#[cfg(not(loom))]
-					let guard = unsafe {
-						let lock = &*lock;
-
-						lock.try_lock()
-					};
+					let guard = self.lock.try_lock();
 
 					#[cfg(not(loom))]
 					if guard.is_none() {
@@ -764,7 +752,7 @@ where
 
 impl<T, Tx> Drop for RawStore<T, Tx> {
 	fn drop(&mut self) {
-		// This is necesary to prevent unsoundness.
+		// This is necessary to prevent unsoundness.
 		// I.e., 1-chunk case after finalisation if
 		// one handle is left in Rope, then dropped last
 		// would cause a double free due to aliased chunk.

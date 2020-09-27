@@ -9,10 +9,7 @@ use core::{
 	pin::Pin,
 	task::{Context, Poll},
 };
-use futures::{
-	io::{self, AsyncRead, AsyncReadExt, AsyncSeek},
-	lock::Mutex,
-};
+use futures::io::{self, AsyncRead, AsyncReadExt, AsyncSeek};
 use std::{
 	io::{Error as IoError, ErrorKind as IoErrorKind, Result as IoResult, SeekFrom},
 	marker::Unpin,
@@ -271,13 +268,7 @@ where
 				let mut remaining_in_store = backing_len - pos - read;
 
 				if remaining_in_store == 0 {
-					// Need to do this to trigger the lock
-					// while holding mutability to the other members.
-					let lock: *const Mutex<()> = &self.lock;
-					let mut guard = unsafe {
-						let lock = &*lock;
-						lock.lock()
-					};
+					let mut guard = self.lock.lock();
 
 					if let Poll::Pending = Future::poll(Pin::new(&mut guard), cx) {
 						break;
