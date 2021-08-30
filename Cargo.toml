@@ -22,7 +22,7 @@ tokio-compat = ["async", "tokio", "async-compat"]
 
 # Dependencies
 [dependencies]
-crossbeam-utils = { version = "0.7", features = ["alloc"], default-features = false }
+crossbeam-utils = { version = "0.8", default-features = false }
 
 [dependencies.async-compat]
 optional = true
