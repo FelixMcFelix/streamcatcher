@@ -150,7 +150,7 @@ where
 						},
 						#[cfg(feature = "smol-compat")]
 						Finaliser::Smol => {
-							smol::Task::spawn(async move {
+							smol::spawn(async move {
 								handle.do_finalise();
 							})
 							.detach();

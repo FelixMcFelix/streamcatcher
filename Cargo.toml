@@ -26,7 +26,7 @@ crossbeam-utils = { version = "0.8", default-features = false }
 
 [dependencies.async-compat]
 optional = true
-version = "0.1"
+version = "0.2"
 
 [dependencies.async-std]
 default-features = false
@@ -45,16 +45,16 @@ version = "0.3"
 
 [dependencies.smol]
 optional = true
-version = "0.3"
+version = "1"
 
 [dependencies.tokio]
 default-features = false
-features = ["rt-core"]
+features = ["rt"]
 optional = true
-version = "0.2"
+version = "1"
 
 [target.'cfg(loom)'.dependencies]
-loom = { version = "0.3", features = ["checkpoint"] }
+loom = { version = "0.5", features = ["checkpoint"] }
 
 # Testing.
 [dev-dependencies]
@@ -62,8 +62,8 @@ async-std = { version = "1", features = ["attributes"] }
 criterion = "0.3"
 futures = "0.3"
 synchronoise = "1"
-smol = "0.3"
-tokio = { version = "0.2", features = ["rt-threaded", "macros"] }
+smol = "1"
+tokio = { version = "1", features = ["rt", "macros"] }
 utils = { path = "utils" }
 
 [[test]]

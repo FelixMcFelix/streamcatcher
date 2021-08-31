@@ -186,32 +186,32 @@ mod smol {
 
 	#[test]
 	fn identity() {
-		smol::run(async { super::identity().await });
+		smol::block_on(async { super::identity().await });
 	}
 
 	#[test]
 	fn load_all() {
-		smol::run(async { super::load_all().await });
+		smol::block_on(async { super::load_all().await });
 	}
 
 	#[test]
 	fn spawn_finalise() {
-		smol::run(async { super::spawn_finalise(Finaliser::Smol).await });
+		smol::block_on(async { super::spawn_finalise(Finaliser::Smol).await });
 	}
 
 	#[test]
 	fn seek_start() {
-		smol::run(async { super::seek_start().await });
+		smol::block_on(async { super::seek_start().await });
 	}
 
 	#[test]
 	fn seek_end() {
-		smol::run(async { super::seek_end().await });
+		smol::block_on(async { super::seek_end().await });
 	}
 
 	#[test]
 	fn read_after_complete() {
-		smol::run(async { super::read_after_complete().await });
+		smol::block_on(async { super::read_after_complete().await });
 	}
 }
 
