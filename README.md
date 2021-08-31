@@ -1,4 +1,4 @@
-[![docs-badge][]][docs] [![crates.io version][]][crates.io link] [![license][]][license link] [![build badge]][build]
+[![docs-badge][]][docs] [![crates.io version][]][crates.io link] [![crates.io downloads][]][crates.io link] [![license][]][license link] [![build badge]][build]
 
 # Streamcatcher
 A Rust thread-safe, shared (asynchronous) stream buffer designed to lock only on accessing and storing new data.
@@ -46,6 +46,7 @@ Detailed guidelines are given in [the CONTRIBUTING file].
 
 [crates.io link]: https://crates.io/crates/streamcatcher
 [crates.io version]: https://img.shields.io/crates/v/streamcatcher.svg?style=flat-square
+[crates.io downloads]: https://img.shields.io/crates/d/streamcatcher.svg?style=flat-square
 
 [license]: https://img.shields.io/crates/l/streamcatcher?style=flat-square
 [license link]: https://opensource.org/licenses/Apache-2.0
