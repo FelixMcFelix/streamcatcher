@@ -194,7 +194,7 @@ where
 				// We could, in theory, use metadata as the basis,
 				// but incorrect metadata would be tricky to work around.
 				let mut end_read_future = self.new_handle().load_all_async();
-				if let Poll::Pending = Future::poll(Pin::new(&mut end_read_future), cx) {
+				if Future::poll(Pin::new(&mut end_read_future), cx).is_pending() {
 					return Poll::Pending;
 				}
 
@@ -210,7 +210,7 @@ where
 				self.pos = (new_pos as usize).min(self.len());
 				if new_pos != self.pos as u64 {
 					let mut skip_future = self.skip(new_pos as usize - self.pos);
-					if let Poll::Pending = Future::poll(Pin::new(&mut skip_future), cx) {
+					if Future::poll(Pin::new(&mut skip_future), cx).is_pending() {
 						return Poll::Pending;
 					}
 				}
@@ -270,7 +270,7 @@ where
 				if remaining_in_store == 0 {
 					let mut guard = self.lock.lock();
 
-					if let Poll::Pending = Future::poll(Pin::new(&mut guard), cx) {
+					if Future::poll(Pin::new(&mut guard), cx).is_pending() {
 						break;
 					}
 

@@ -16,7 +16,7 @@ use std::{
 		Seek,
 		SeekFrom,
 	},
-	mem::{self, ManuallyDrop},
+	mem,
 };
 
 /// A simple shared stream buffer, leaving data unchanged.
@@ -272,7 +272,7 @@ where
 	Tx: NeedsBytes,
 {
 	pub(crate) fn new(source: T, transform: Tx, config: Option<Config>) -> Result<Self> {
-		let config = config.unwrap_or_else(Default::default);
+		let config = config.unwrap_or_default();
 		let min_bytes = transform.min_bytes_required();
 
 		if config.chunk_size.lower_bound() < min_bytes {
@@ -462,7 +462,7 @@ impl<T, Tx> RawStore<T, Tx> {
 						let el = rope
 							.pop_front()
 							.expect("Length of rope was established as >= 1.");
-						ManuallyDrop::new(el.data);
+						mem::forget(el.data);
 					}
 				}
 
