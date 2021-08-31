@@ -71,6 +71,9 @@ name = "async"
 path = "tests/async.rs"
 required-features = ["async-std-compat", "smol-compat", "tokio-compat"]
 
+[lib]
+bench = false
+
 [[bench]]
 name = "allocs"
 path = "benches/allocs.rs"
