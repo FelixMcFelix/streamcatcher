@@ -1,6 +1,9 @@
 # Changelog
 Notable updates will be documented here, adhering to [Semantic Versioning][semver].
 
+## [1.0.1] - 2021-12-27
+* Fix to bad position handling for a pathological read-refill-read use case.
+
 ## [1.0.0] - 2021-08-31
 * Update to stabilised async executors (tokio 1.0, smol 1.0).
 
@@ -20,6 +23,7 @@ This is the first release after testing the transform abstration within [serenit
 ## [0.0.1] - 2020-08-17
 * Initial version.
 
+[1.0.1]: https://github.com/FelixMcFelix/streamcatcher/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/FelixMcFelix/streamcatcher/compare/v0.1.1...v1.0.0
 [0.1.1]: https://github.com/FelixMcFelix/streamcatcher/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/FelixMcFelix/streamcatcher/commit/636c54a6845afdab45a9fbe778acc8765e0581ba
