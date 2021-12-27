@@ -304,7 +304,7 @@ where
 
 				if remaining_in_store > 0 {
 					let count = remaining_in_store.min(buf.len() - read);
-					read += self.read_from_local(pos, loc, &mut buf[read..], count);
+					read += self.read_from_local(pos + read, loc, &mut buf[read..], count);
 				}
 
 				// break out if:
